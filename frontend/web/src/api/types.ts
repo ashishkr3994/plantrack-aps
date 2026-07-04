@@ -1,0 +1,311 @@
+// Types mirroring the backend Pydantic schemas (backend/app/schemas.py).
+export type Priority = "HIGH" | "MED" | "LOW";
+export type SchedMode = "backward" | "forward";
+
+export interface Product {
+  id: number;
+  product_id: string;
+  name: string;
+  family: string;
+  routing_id: number | null;
+  is_active: boolean;
+}
+
+export interface Order {
+  id: number;
+  order_id: string;
+  product_id: number;
+  customer: string;
+  order_qty: number;
+  order_date: string;
+  committed_delivery_date: string;
+  priority: Priority;
+  plant_id: number | null;
+  sched_mode: SchedMode;
+  replan_count: number;
+}
+
+export interface OrderCreate {
+  order_id: string;
+  product_id: number;
+  customer: string;
+  order_qty: number;
+  order_date: string;
+  committed_delivery_date: string;
+  priority?: Priority;
+  plant_id?: number | null;
+  sched_mode?: SchedMode;
+}
+
+export interface BomLine {
+  id: number;
+  product_id: number;
+  material: string;
+  qty_per_unit: number;
+  uom: string;
+  supplier: string | null;
+  lead_days: number;
+}
+
+export interface BomCreate {
+  product_id: number;
+  material: string;
+  qty_per_unit: number;
+  uom: string;
+  supplier?: string | null;
+  lead_days?: number;
+}
+
+export interface BomUpdate {
+  material?: string;
+  qty_per_unit?: number;
+  uom?: string;
+  supplier?: string | null;
+  lead_days?: number;
+}
+
+export interface RoutingOp {
+  id: number;
+  operation_seq: number;
+  work_center: string;
+  setup_min: number | null;
+  run_per_unit_min: number | null;
+  queue_min: number | null;
+  move_min: number | null;
+  predecessor_seq: number | null;
+  parallel_group: string | null;
+}
+
+export interface Routing {
+  id: number;
+  route_id: string;
+  description: string | null;
+  operations: RoutingOp[];
+}
+
+export interface RoutingCreate {
+  route_id: string;
+  description?: string | null;
+}
+
+export interface RoutingOpCreate {
+  operation_seq: number;
+  work_center: string;
+  setup_min?: number;
+  run_per_unit_min?: number;
+  queue_min?: number;
+  move_min?: number;
+  predecessor_seq?: number | null;
+  parallel_group?: string | null;
+}
+
+export type RoutingOpUpdate = Partial<RoutingOpCreate>;
+
+export interface EventCreate {
+  event_id: string;
+  order_id: number;
+  operation_seq?: number | null;
+  event_type: string;
+  event_timestamp: string;
+  event_qty?: number | null;
+  downtime_reason?: string | null;
+  downtime_mins?: number;
+  entered_by?: string | null;
+}
+
+export interface ActualEvent extends EventCreate {
+  id: number;
+}
+
+export interface DashboardSummary {
+  orders: number;
+  products: number;
+  open_alerts: number;
+  capacity_conflicts: number;
+  material_at_risk: number;
+}
+
+export interface WatchlistRow {
+  order_id: string;
+  customer: string;
+  order_qty: number;
+  priority: Priority;
+  committed_delivery_date: string;
+  product_name: string;
+  product_family: string;
+  buffer_hrs: number | null;
+  schedule_status: string | null;
+  material_status: string | null;
+  planned_delivery_dt: string | null;
+}
+
+// --- scheduling / async solve ---
+export type SolveStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface SolveJob {
+  job_id: string;
+  status: SolveStatus;
+  result: {
+    status: string;
+    feasible: boolean;
+    makespan: number | null;
+    weighted_tardiness: number;
+    wall_time_s: number;
+    orders_total: number;
+    orders_on_time: number;
+    bottleneck_machine?: string | null;
+    machine_load_min?: Record<string, number>;
+    late_orders?: Array<{ order_id: string; reason: string | null }>;
+  } | null;
+  error: string | null;
+}
+
+export interface SolveRequest {
+  mode?: SchedMode;
+  time_budget_s?: number;
+  order_ids?: string[] | null;
+}
+
+export interface OrderSchedule {
+  order_id: string;
+  schedule: Record<string, unknown> | null;
+  operations: Array<{
+    operation_seq: number;
+    work_center: string;
+    parallel_group: string | null;
+    predecessor_operation_seq: number | null;
+    planned_start: string;
+    planned_end: string;
+    duration_mins: number;
+  }>;
+}
+
+
+// --- auth ---
+export type Role = "admin" | "planner" | "supervisor" | "procurement" | "viewer";
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  full_name: string | null;
+  role: Role;
+  is_active: boolean;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  role: Role;
+  username: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  actor_username: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  at: string | null;
+}
+
+
+// --- Phase 5: materials, import, sandbox ---
+export interface MaterialStatusRow {
+  order_id: string;
+  material_count: number;
+  max_lead_days: number;
+  planned_ready_dt: string | null;
+  actual_ready_dt: string | null;
+  status: "ordered" | "ready" | "risk" | "late";
+  slip_days: number;
+  risk_reason: string | null;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface SandboxOverride {
+  order_id: string;
+  qty?: number | null;
+  priority?: string | null;
+  committed_due_dt?: string | null;
+  exclude?: boolean;
+}
+
+export interface SandboxSummary {
+  status: string;
+  feasible: boolean;
+  makespan: number | null;
+  weighted_tardiness: number;
+  orders_total: number;
+  orders_on_time: number;
+  wall_time_s: number;
+}
+
+export interface SandboxResult {
+  baseline: SandboxSummary;
+  scenario: SandboxSummary;
+  orders: Array<{
+    order_id: string;
+    on_time: boolean;
+    lateness_min: number;
+    baseline_lateness_min: number | null;
+    changed: boolean;
+  }>;
+  note: string;
+  baseline_order_count: number;
+}
+
+
+// --- Phase 6: alerts & deviations ---
+export interface AlertRow {
+  alert_id: string;
+  dedup_key: string;
+  alert_type: "crit" | "warn" | "info";
+  title: string;
+  meta: string | null;
+  status: "open" | "ack" | "closed";
+  raised_at: string | null;
+}
+
+export interface DeviationRow {
+  deviation_id: string;
+  order_id: number;
+  milestone_name: string;
+  baseline_dt: string | null;
+  latest_forecast_dt: string | null;
+  deviation_minutes: number;
+  severity: "Medium" | "High" | "Critical";
+  root_cause_code: string | null;
+  action_owner: string | null;
+  resolution_status: string;
+}
+
+
+// --- Phase 7: recovery ---
+export interface RecoveryResult {
+  feasible: boolean;
+  status?: string;
+  message?: string;
+  order_id?: string;
+  version?: number;
+  baseline_delivery?: string | null;
+  new_delivery?: string | null;
+  on_time?: boolean | null;
+  lateness_min?: number | null;
+  bottleneck?: string | null;
+  options?: Record<string, unknown>;
+}
+
+export interface RescheduleLogRow {
+  version: number;
+  options: Record<string, unknown>;
+  baseline_delivery: string | null;
+  new_delivery: string | null;
+  performed_by: string | null;
+  performed_at: string | null;
+}
