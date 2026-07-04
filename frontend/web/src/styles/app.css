@@ -85,19 +85,19 @@ label { font-size: 12px; color: var(--ink-2); display: block; margin-bottom: 4px
 /* layout */
 .app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
 .sidebar {
-  background: var(--teal-dk);
-  color: #cfe4e6;
+  background: #1c2733;
+  color: #c2ccd6;
   padding: 18px 12px;
   display: flex; flex-direction: column; gap: 2px;
   overflow-y: auto;
 }
 .brand { color: #fff; font-weight: 750; font-size: 18px; padding: 6px 10px 16px; letter-spacing: -0.02em; }
-.brand small { display: block; font-weight: 500; font-size: 11px; color: #9ec7cb; letter-spacing: 0.02em; }
+.brand small { display: block; font-weight: 500; font-size: 11px; color: #8a97a4; letter-spacing: 0.02em; }
 .nav-item {
-  color: #cfe4e6; padding: 8px 10px; border-radius: var(--r-sm);
+  color: #c2ccd6; padding: 8px 10px; border-radius: var(--r-sm);
   font-size: 13.5px; font-weight: 550; display: flex; gap: 8px; align-items: center;
 }
-.nav-item:hover { background: rgba(255,255,255,0.08); text-decoration: none; }
+.nav-item:hover { background: rgba(255,255,255,0.06); text-decoration: none; }
 .nav-item.active { background: var(--teal); color: #fff; }
 
 .main { overflow-y: auto; }
@@ -126,18 +126,24 @@ label { font-size: 12px; color: var(--ink-2); display: block; margin-bottom: 4px
 
 /* table */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); font-weight: 650; background: var(--teal-lt); }
-tbody tr:hover { background: var(--teal-lt); }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); font-weight: 600; background: transparent; }
+tbody tr { transition: background 0.1s; }
+tbody tr:hover { background: rgba(31,111,120,0.05); }
+tbody tr:last-child td { border-bottom: none; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* buffer-health bar (watchlist), matching the prototype */
+.buffer-track { height: 5px; background: rgba(81,96,110,0.15); border-radius: 3px; overflow: hidden; min-width: 60px; }
+.buffer-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+
 /* status pills */
-.pill { display: inline-block; padding: 2px 9px; border-radius: 100px; font-size: 11.5px; font-weight: 650; }
-.pill.ok { background: var(--ok-bg); color: var(--ok); }
-.pill.warn { background: var(--warn-bg); color: var(--warn); }
-.pill.risk { background: var(--risk-bg); color: var(--risk); }
-.pill.info { background: var(--teal-lt); color: var(--teal-dk); }
-.pill.muted { background: #eef1f3; color: var(--ink-2); }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.2px; }
+.pill.ok { background: rgba(34,124,78,0.12); color: var(--ok); }
+.pill.warn { background: rgba(180,105,14,0.12); color: var(--warn); }
+.pill.risk { background: rgba(180,35,24,0.12); color: var(--risk); }
+.pill.info { background: rgba(31,111,120,0.12); color: var(--teal); }
+.pill.muted { background: rgba(81,96,110,0.10); color: var(--ink-2); }
 
 /* misc */
 .row { display: flex; gap: 10px; align-items: center; }
@@ -230,3 +236,30 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 2px 12px rgba(0,0,0,0.3);
 }
 [data-theme="dark"] body { background: var(--canvas); color: var(--ink); }
+
+/* ===== Softer surfaces for Import & code/template areas ===== */
+/* code/template blocks: gentle tinted panel instead of stark white */
+pre.mono {
+  background: var(--teal-lt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+}
+/* file inputs: softer, less stark than default white */
+input[type="file"] {
+  background: var(--canvas);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  width: 100%;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+input[type="file"]:hover { border-color: var(--teal); background: var(--teal-lt); }
+textarea {
+  background: var(--canvas);
+  color: var(--ink);
+}
+/* dark-mode: keep the tinted code panel readable */
+[data-theme="dark"] pre.mono { background: #10242b; }
