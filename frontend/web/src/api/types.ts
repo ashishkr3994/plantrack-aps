@@ -234,6 +234,7 @@ export interface SandboxOverride {
   priority?: string | null;
   committed_due_dt?: string | null;
   exclude?: boolean;
+  partial_qty?: number | null;
 }
 
 export interface SandboxSummary {
@@ -244,18 +245,42 @@ export interface SandboxSummary {
   orders_total: number;
   orders_on_time: number;
   wall_time_s: number;
+  bottleneck?: string | null;
+}
+
+export interface SandboxOrderResult {
+  order_id: string;
+  mode: string;
+  start_dt: string | null;
+  finish_dt: string | null;
+  due_dt: string | null;
+  on_time: boolean;
+  lateness_min: number;
+  baseline_finish_dt: string | null;
+  baseline_lateness_min: number | null;
+  changed: boolean;
+  reason: string | null;
+}
+
+export interface SandboxOpResult {
+  order_id: string;
+  operation_seq: number;
+  work_center: string;
+  start_dt: string | null;
+  finish_dt: string | null;
+  baseline_work_center: string | null;
+  baseline_start_dt: string | null;
+  moved: boolean;
 }
 
 export interface SandboxResult {
+  mode: string;
+  question: string;
   baseline: SandboxSummary;
   scenario: SandboxSummary;
-  orders: Array<{
-    order_id: string;
-    on_time: boolean;
-    lateness_min: number;
-    baseline_lateness_min: number | null;
-    changed: boolean;
-  }>;
+  orders: SandboxOrderResult[];
+  operations: SandboxOpResult[];
+  applied_changes: string[];
   note: string;
   baseline_order_count: number;
 }
