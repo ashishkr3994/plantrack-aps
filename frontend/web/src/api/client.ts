@@ -7,7 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow,
-  DashboardKpis, CapacityHeatmap, OrderDetail,
+  DashboardKpis, CapacityHeatmap, OrderDetail, CapacityCell,
 } from "./types";
 
 // In dev, Vite proxies /api -> backend. In prod, set VITE_API_BASE.
@@ -100,6 +100,8 @@ export const api = {
   recoveryPipeline: () => request<Array<Record<string, unknown>>>("/dashboard/recovery-pipeline"),
   capacityHeatmap: () => request<CapacityHeatmap>("/dashboard/capacity-heatmap"),
   orderDetail: (orderId: string) => request<OrderDetail>(`/dashboard/order-detail/${orderId}`),
+  capacityCell: (workCenter: string, loadDate: string) =>
+    request<CapacityCell>(`/dashboard/capacity-cell?work_center=${encodeURIComponent(workCenter)}&load_date=${loadDate}`),
 
   // products
   listProducts: () => request<Product[]>("/products"),
@@ -192,4 +194,3 @@ export const api = {
   updateUser: (id: number, patch: { full_name?: string; role?: string; is_active?: boolean; password?: string }) =>
     request<AuthUser>(`/auth/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };
-
