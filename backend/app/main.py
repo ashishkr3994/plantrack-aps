@@ -77,11 +77,12 @@ def _startup() -> None:
             seeds = [repo / "db" / "seeds" / "0001_sample_data.sql",
                      repo / "db" / "seeds" / "0002_users.sql"]
             with engine.begin() as conn:
-                for f in seeds:
-                    conn.execute(text(f.read_text()))
+                for sf in seeds:
+                    conn.execute(text(sf.read_text()))
             print("[startup] demo data seeded (first boot)")
     except Exception as e:
         print(f"[startup] auto-seed skipped: {e}")
+
 
 @app.get("/health", tags=["meta"])
 def health():
@@ -140,4 +141,3 @@ if _static_dir and os.path.isdir(_static_dir):
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)
         return FileResponse(os.path.join(_static_dir, "index.html"))
-
