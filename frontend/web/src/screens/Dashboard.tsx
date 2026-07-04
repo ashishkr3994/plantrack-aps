@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, Modal } from "@/components/ui";
@@ -18,6 +19,7 @@ function fmtDT(s: unknown): string {
 }
 
 export function Dashboard() {
+  const nav = useNavigate();
   const kpis = useQuery({ queryKey: ["kpis"], queryFn: api.kpis });
   const watch = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlist });
   const [drillOrder, setDrillOrder] = useState<string | null>(null);
@@ -30,14 +32,14 @@ export function Dashboard() {
         {kpis.isError && <ErrorState message="Couldn't load metrics." onRetry={() => kpis.refetch()} />}
         {kpis.data && (
           <>
-            <Kpi label="Schedule adherence" value={kpis.data.schedule_adherence_pct == null ? "—" : `${kpis.data.schedule_adherence_pct}%`} tone={pct(kpis.data.schedule_adherence_pct)} />
-            <Kpi label="On-time delivery" value={kpis.data.on_time_delivery_pct == null ? "—" : `${kpis.data.on_time_delivery_pct}%`} tone={pct(kpis.data.on_time_delivery_pct)} />
-            <Kpi label="Orders at risk" value={kpis.data.orders_at_risk} tone={kpis.data.orders_at_risk > 0 ? "warn" : "ok"} />
-            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} />
-            <Kpi label="Material at risk" value={kpis.data.material_at_risk} tone={kpis.data.material_at_risk > 0 ? "warn" : "ok"} />
-            <Kpi label="Capacity conflicts" value={kpis.data.capacity_conflicts} tone={kpis.data.capacity_conflicts > 0 ? "warn" : "ok"} />
-            <Kpi label="Open alerts" value={kpis.data.open_alerts} tone={kpis.data.open_alerts > 0 ? "alert" : "ok"} />
-            <Kpi label="Active orders" value={kpis.data.orders} />
+            <Kpi label="Schedule adherence" value={kpis.data.schedule_adherence_pct == null ? "—" : `${kpis.data.schedule_adherence_pct}%`} tone={pct(kpis.data.schedule_adherence_pct)} onClick={() => nav("/schedule")} />
+            <Kpi label="On-time delivery" value={kpis.data.on_time_delivery_pct == null ? "—" : `${kpis.data.on_time_delivery_pct}%`} tone={pct(kpis.data.on_time_delivery_pct)} onClick={() => nav("/schedule")} />
+            <Kpi label="Orders at risk" value={kpis.data.orders_at_risk} tone={kpis.data.orders_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/orders")} />
+            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} onClick={() => nav("/reschedule")} />
+            <Kpi label="Material at risk" value={kpis.data.material_at_risk} tone={kpis.data.material_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/materials")} />
+            <Kpi label="Capacity conflicts" value={kpis.data.capacity_conflicts} tone={kpis.data.capacity_conflicts > 0 ? "warn" : "ok"} onClick={() => nav("/capacity")} />
+            <Kpi label="Open alerts" value={kpis.data.open_alerts} tone={kpis.data.open_alerts > 0 ? "alert" : "ok"} onClick={() => nav("/alerts")} />
+            <Kpi label="Active orders" value={kpis.data.orders} onClick={() => nav("/orders")} />
           </>
         )}
       </section>
@@ -85,13 +87,10 @@ export function Dashboard() {
 
       {/* Three insight panels */}
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-        <DelayReasonsPanel />
-        <RecoveryPipelinePanel />
-        <MaterialRiskPanel />
+        <DelayReasonsPanel onOpen={() => nav("/reschedule")} />
+        <RecoveryPipelinePanel onOpen={() => nav("/reschedule")} />
+        <MaterialRiskPanel onOpen={() => nav("/materials")} />
       </div>
-
-      {/* Capacity heatmap */}
-      <CapacityHeatmapPanel />
 
       {drillOrder && <OrderDrillDown orderId={drillOrder} onClose={() => setDrillOrder(null)} />}
     </div>
@@ -119,13 +118,13 @@ function BufferBar({ hrs }: { hrs: unknown }) {
   );
 }
 
-function DelayReasonsPanel() {
+function DelayReasonsPanel({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["delay-reasons"], queryFn: api.delayReasons });
   const rows = q.data ?? [];
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <section className="card">
-      <div className="hd">Delay reasons</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Delay reasons →</div>
       <div className="bd">
         {q.isLoading && <Loading />}
         {!q.isLoading && rows.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No open deviations — nothing delayed.</div>}
@@ -143,12 +142,12 @@ function DelayReasonsPanel() {
   );
 }
 
-function RecoveryPipelinePanel() {
+function RecoveryPipelinePanel({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["recovery-pipeline"], queryFn: api.recoveryPipeline });
   const rows = q.data ?? [];
   return (
     <section className="card">
-      <div className="hd">Recovery pipeline</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Recovery pipeline →</div>
       <div className="bd" style={{ padding: 0 }}>
         {q.isLoading && <Loading />}
         {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No recoveries yet.</div>}
@@ -172,12 +171,12 @@ function RecoveryPipelinePanel() {
   );
 }
 
-function MaterialRiskPanel() {
+function MaterialRiskPanel({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["material-risk-panel"], queryFn: api.materialStatus });
   const rows = (q.data ?? []).filter((m) => m.status === "risk" || m.status === "late");
   return (
     <section className="card">
-      <div className="hd">Material risk</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open materials">Material risk →</div>
       <div className="bd" style={{ padding: 0 }}>
         {q.isLoading && <Loading />}
         {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No material risks.</div>}
@@ -198,64 +197,6 @@ function MaterialRiskPanel() {
       </div>
     </section>
   );
-}
-
-function CapacityHeatmapPanel() {
-  const q = useQuery({ queryKey: ["capacity-heatmap"], queryFn: api.capacityHeatmap });
-  if (q.isLoading) return <section className="card"><div className="hd">Capacity heatmap</div><div className="bd"><Loading /></div></section>;
-  const data = q.data;
-  if (!data || data.grid.length === 0) return (
-    <section className="card"><div className="hd">Capacity heatmap</div><div className="state">No capacity data yet — run the optimiser to populate it.</div></section>
-  );
-  const heatColor = (v: number | null) => {
-    if (v == null) return "var(--canvas)";
-    if (v >= 100) return "rgba(180,35,24,0.85)";
-    if (v >= 85) return "rgba(180,105,14,0.75)";
-    if (v >= 60) return "rgba(180,105,14,0.35)";
-    return "rgba(34,124,78,0.30)";
-  };
-  return (
-    <section className="card">
-      <div className="hd">Capacity heatmap — load % by work centre & day</div>
-      <div className="bd" style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "separate", borderSpacing: 2 }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left" }}>Work centre</th>
-              {data.dates.map((d) => <th key={d} style={{ fontSize: 10, textAlign: "center" }}>{fmtDate(d).replace(/,.*/, "")}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {data.grid.map((row) => (
-              <tr key={row.work_center}>
-                <td style={{ fontSize: 12, whiteSpace: "nowrap", borderBottom: "none" }}>{row.work_center}</td>
-                {row.cells.map((c) => (
-                  <td key={c.date} title={`${row.work_center} · ${fmtDate(c.date)} · ${c.load_pct == null ? "no load" : c.load_pct + "%"}`}
-                      style={{ background: heatColor(c.load_pct), textAlign: "center", fontSize: 10.5, minWidth: 44,
-                               color: (c.load_pct ?? 0) >= 85 ? "#fff" : "var(--ink)", borderRadius: 3, border: "none",
-                               fontWeight: c.overloaded ? 700 : 400 }}>
-                    {c.load_pct == null ? "" : `${c.load_pct}`}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-2)", flexWrap: "wrap" }}>
-          <Legend color="rgba(34,124,78,0.30)" label="< 60%" />
-          <Legend color="rgba(180,105,14,0.35)" label="60–85%" />
-          <Legend color="rgba(180,105,14,0.75)" label="85–100%" />
-          <Legend color="rgba(180,35,24,0.85)" label="≥ 100% (overloaded)" />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-    <span style={{ width: 14, height: 14, background: color, borderRadius: 3, display: "inline-block" }} /> {label}
-  </span>;
 }
 
 function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => void }) {
@@ -389,9 +330,11 @@ function Empty({ text }: { text: string }) {
   return <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>{text}</p>;
 }
 
-function Kpi({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "alert" }) {
+function Kpi({ label, value, tone, onClick }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "alert"; onClick?: () => void }) {
   return (
-    <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}>
+    <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}
+         onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}
+         title={onClick ? "Click to open the related page" : undefined}>
       <div className="v">{value}</div>
       <div className="l">{label}</div>
     </div>
