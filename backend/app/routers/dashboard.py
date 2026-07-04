@@ -201,3 +201,35 @@ def order_detail(order_id: str, db: Session = Depends(get_db)):
         "bom": bom,
         "events": events,
     }
+
+
+@router.get("/capacity-cell")
+def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db)):
+    """Which orders/operations load a given work-centre on a given day — the
+    drill-down behind a heatmap cell. Shows what's breaching capacity there."""
+    res = db.execute(text("""
+        SELECT o.order_id, o.customer, o.priority,
+               oo.operation_seq, oo.work_center, oo.duration_mins,
+               oo.planned_start, oo.planned_end
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        WHERE oo.work_center = :wc
+          AND oo.planned_start::date <= CAST(:d AS date)
+          AND oo.planned_end::date   >= CAST(:d AS date)
+        ORDER BY oo.planned_start
+    """), {"wc": work_center, "d": load_date})
+    cols = res.keys()
+    operations = [
+        {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in dict(zip(cols, r)).items()}
+        for r in res.fetchall()
+    ]
+    load = db.execute(text(
+        "SELECT available_min, demand_min, round(load_pct,0) AS load_pct, overloaded "
+        "FROM capacity_load WHERE work_center=:wc AND load_date=:d"),
+        {"wc": work_center, "d": load_date}).mappings().first()
+    return {
+        "work_center": work_center,
+        "load_date": load_date,
+        "load": dict(load) if load else None,
+        "operations": operations,
+    }
