@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink, Route, Routes, Navigate } from "react-router-dom";
 import { useLiveUpdates } from "./hooks/useLiveUpdates";
 import { useAuth } from "./hooks/useAuth";
@@ -39,18 +39,105 @@ function LiveBadge() {
   return <span className={`pill ${tone}`} title="Live update connection">{label}</span>;
 }
 
-function UserMenu() {
-  const { user, logout } = useAuth();
-  const [showPw, setShowPw] = useState(false);
-  if (!user) return null;
+function Clock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
   return (
-    <div className="row" style={{ gap: 10 }}>
-      <span className="pill info" title="Your role">{user.role}</span>
-      <span className="muted" style={{ fontSize: 13 }}>{user.username}</span>
-      <button className="ghost" onClick={() => setShowPw(true)}>Change password</button>
-      <button className="ghost" onClick={logout}>Sign out</button>
-      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
+    <div className="clock" title="Current time">
+      <span className="clock-time">
+        {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+      </span>
+      <span className="clock-date">
+        {now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+      </span>
     </div>
+  );
+}
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => {
+    try { return localStorage.getItem("plantrack_theme") === "dark"; } catch { return false; }
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    try { localStorage.setItem("plantrack_theme", dark ? "dark" : "light"); } catch (e) { void e; }
+  }, [dark]);
+  return (
+    <button className="ghost icon-btn" title={dark ? "Switch to light mode" : "Switch to dark mode"}
+      onClick={() => setDark((d) => !d)}>
+      {dark ? "☀" : "☾"}
+    </button>
+  );
+}
+
+function ProfileMenu() {
+  const { user, logout } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  if (!user) return null;
+  const initials = user.username.slice(0, 2).toUpperCase();
+  return (
+    <div className="profile-wrap">
+      <button className="avatar-btn" onClick={() => setOpen((o) => !o)} title="Account">
+        <span className="avatar">{initials}</span>
+        <span className="avatar-name">{user.username}</span>
+        <span className="avatar-caret">▾</span>
+      </button>
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={() => setOpen(false)} />
+          <div className="profile-menu">
+            <div className="profile-head">
+              <span className="avatar lg">{initials}</span>
+              <div>
+                <div className="profile-name">{user.username}</div>
+                <div className="profile-role"><span className="pill info">{user.role}</span></div>
+              </div>
+            </div>
+            <button className="menu-item" onClick={() => { setShowProfile(true); setOpen(false); }}>Profile & details</button>
+            <button className="menu-item" onClick={() => { setShowPw(true); setOpen(false); }}>Change password</button>
+            <div className="menu-sep" />
+            <button className="menu-item danger" onClick={logout}>Sign out</button>
+          </div>
+        </>
+      )}
+      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+    </div>
+  );
+}
+
+function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { user } = useAuth();
+  if (!user) return null;
+  const initials = user.username.slice(0, 2).toUpperCase();
+  return (
+    <Modal title="Profile & details" onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
+      <div className="stack">
+        <div className="profile-head">
+          <span className="avatar xl">{initials}</span>
+          <div>
+            <div className="profile-name" style={{ fontSize: 18 }}>{user.username}</div>
+            <div className="profile-role"><span className="pill info">{user.role}</span></div>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><td className="muted">Username</td><td>{user.username}</td></tr>
+            <tr><td className="muted">Role</td><td>{user.role}</td></tr>
+            {"full_name" in user && (user as { full_name?: string }).full_name &&
+              <tr><td className="muted">Full name</td><td>{(user as { full_name?: string }).full_name}</td></tr>}
+          </tbody>
+        </table>
+        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+          Profile photo upload is coming soon. For now your initials are shown as your avatar.
+        </p>
+      </div>
+    </Modal>
   );
 }
 
@@ -130,8 +217,10 @@ export function App() {
         <header className="topbar">
           <h1>Production Control Tower</h1>
           <div className="row" style={{ gap: 14 }}>
+            <Clock />
             <LiveBadge />
-            <UserMenu />
+            <ThemeToggle />
+            <ProfileMenu />
           </div>
         </header>
         <main className="content">
