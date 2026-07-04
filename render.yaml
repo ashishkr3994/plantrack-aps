@@ -1,0 +1,50 @@
+
+# Render Blueprint — free-tier, single-service deploy of PlanTrack.
+#
+# One free web service hosts BOTH the API and the built React UI. The free tier
+# has no Redis, so the app runs in single-process mode: solves run inline and the
+# periodic deviation scan runs on an in-process timer. A free Postgres database is
+# provisioned alongside.
+#
+# To deploy: push this repo to GitHub, then in Render choose "New > Blueprint"
+# and point it at the repo. Render reads this file and creates both services.
+#
+# NOTE (free-tier limits): the web service spins down after ~15 min idle (first
+# request after that takes ~1 min to wake), and the free Postgres database EXPIRES
+# 30 days after creation. Fine for a demo; upgrade the DB to keep data long-term.
+
+databases:
+  - name: plantrack-db
+    plan: free
+    databaseName: plantrack
+    user: plantrack
+
+services:
+  - type: web
+    name: plantrack
+    runtime: python
+    plan: free
+    # Build: install backend deps, build the frontend, stage it for serving.
+    buildCommand: "./render-build.sh"
+    # Start: run migrations, then serve API + UI on the port Render provides.
+    startCommand: "cd backend && alembic upgrade head && gunicorn app.main:app --worker-class uvicorn.workers.UvicornWorker --workers 1 --bind 0.0.0.0:$PORT --timeout 120"
+    healthCheckPath: /health
+    envVars:
+      - key: PLANTRACK_ENV
+        value: production
+      - key: PLANTRACK_SINGLE_PROCESS
+        value: "1"
+      - key: PLANTRACK_SECRET_KEY
+        generateValue: true          # Render generates a strong secret
+      - key: PLANTRACK_ALLOWED_ORIGINS
+        sync: false                  # set to your render URL after first deploy (or "*")
+      - key: PLANTRACK_STATIC_DIR
+        value: /opt/render/project/src/frontend/web/dist
+      - key: PLANTRACK_SCAN_INTERVAL_S
+        value: "300"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: plantrack-db
+          property: connectionString

@@ -1,0 +1,62 @@
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.next/
+*.local
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# DB
+*.sqlite
+*.db
+pgdata/
+solver/.pytest_cache/
+
+backend/.pytest_cache/
+__pycache__/
+
+# frontend build
+frontend/web/node_modules/
+frontend/web/dist/
+frontend/web/.vite/
+
+.env.example
+
+
+# Copy to .env and fill in. NEVER commit the real .env.
+# Generate a strong secret, e.g.:  python -c "import secrets; print(secrets.token_urlsafe(48))"
+PLANTRACK_SECRET_KEY=replace-with-a-strong-random-secret
+PLANTRACK_ENV=production
+# Comma-separated browser origins allowed to call the API:
+PLANTRACK_ALLOWED_ORIGINS=https://plantrack.example.com
+
+POSTGRES_USER=plantrack
+POSTGRES_PASSWORD=replace-with-a-strong-db-password
+POSTGRES_DB=plantrack
+
+# Optional
+WEB_CONCURRENCY=3
+PLANTRACK_SCAN_INTERVAL_S=300
+SENTRY_DSN=

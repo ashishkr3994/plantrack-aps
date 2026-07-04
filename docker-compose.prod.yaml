@@ -1,0 +1,103 @@
+# Production-style stack: Postgres + Redis + API (gunicorn) + Celery worker + beat.
+# Secrets come from a .env file (see .env.example) — never commit real secrets.
+#   cp .env.example .env   # then edit
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Migrations run automatically on API start (alembic upgrade head). TLS is
+# expected to be terminated by a reverse proxy / load balancer in front of :8000.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    command: ["api"]
+    environment:
+      PLANTRACK_ENV: production
+      PLANTRACK_SECRET_KEY: ${PLANTRACK_SECRET_KEY:?set a strong secret in .env}
+      PLANTRACK_ALLOWED_ORIGINS: ${PLANTRACK_ALLOWED_ORIGINS:?set explicit origins in .env}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://redis:6379/0
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-3}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    command: ["worker"]
+    environment:
+      PLANTRACK_ENV: production
+      PLANTRACK_SECRET_KEY: ${PLANTRACK_SECRET_KEY}
+      PLANTRACK_ALLOWED_ORIGINS: ${PLANTRACK_ALLOWED_ORIGINS}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    command: ["beat"]
+    environment:
+      PLANTRACK_ENV: production
+      PLANTRACK_SECRET_KEY: ${PLANTRACK_SECRET_KEY}
+      PLANTRACK_ALLOWED_ORIGINS: ${PLANTRACK_ALLOWED_ORIGINS}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://redis:6379/0
+      PLANTRACK_SCAN_INTERVAL_S: ${PLANTRACK_SCAN_INTERVAL_S:-300}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
