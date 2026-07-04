@@ -1,39 +1,48 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSummary, useWatchlist } from "@/hooks/queries";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, Modal } from "@/components/ui";
 
-function fmtDate(s: string | null | undefined) {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+function fmtDate(s: unknown): string {
+  if (!s || typeof s !== "string") return "—";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(s);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+function fmtDT(s: unknown): string {
+  if (!s || typeof s !== "string") return "—";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(s);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-type Drill = "orders" | "alerts" | "capacity" | "material" | null;
-
 export function Dashboard() {
-  const summary = useSummary();
-  const watch = useWatchlist();
-  const [drill, setDrill] = useState<Drill>(null);
+  const kpis = useQuery({ queryKey: ["kpis"], queryFn: api.kpis });
+  const watch = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlist });
+  const [drillOrder, setDrillOrder] = useState<string | null>(null);
 
   return (
     <div className="stack">
+      {/* KPI strip */}
       <section className="grid kpis">
-        {summary.isLoading && <Loading label="Loading metrics…" />}
-        {summary.isError && (
-          <ErrorState message="Couldn't load dashboard metrics." onRetry={() => summary.refetch()} />
-        )}
-        {summary.data && (
+        {kpis.isLoading && <Loading label="Loading metrics…" />}
+        {kpis.isError && <ErrorState message="Couldn't load metrics." onRetry={() => kpis.refetch()} />}
+        {kpis.data && (
           <>
-            <Kpi label="Active orders" value={summary.data.orders} onClick={() => setDrill("orders")} />
-            <Kpi label="Products" value={summary.data.products} />
-            <Kpi label="Open alerts" value={summary.data.open_alerts} tone={summary.data.open_alerts > 0 ? "alert" : undefined} onClick={() => setDrill("alerts")} />
-            <Kpi label="Capacity conflicts" value={summary.data.capacity_conflicts} tone={summary.data.capacity_conflicts > 0 ? "warn" : undefined} onClick={() => setDrill("capacity")} />
-            <Kpi label="Material at risk" value={summary.data.material_at_risk} tone={summary.data.material_at_risk > 0 ? "warn" : undefined} onClick={() => setDrill("material")} />
+            <Kpi label="Schedule adherence" value={kpis.data.schedule_adherence_pct == null ? "—" : `${kpis.data.schedule_adherence_pct}%`} tone={pct(kpis.data.schedule_adherence_pct)} />
+            <Kpi label="On-time delivery" value={kpis.data.on_time_delivery_pct == null ? "—" : `${kpis.data.on_time_delivery_pct}%`} tone={pct(kpis.data.on_time_delivery_pct)} />
+            <Kpi label="Orders at risk" value={kpis.data.orders_at_risk} tone={kpis.data.orders_at_risk > 0 ? "warn" : "ok"} />
+            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} />
+            <Kpi label="Material at risk" value={kpis.data.material_at_risk} tone={kpis.data.material_at_risk > 0 ? "warn" : "ok"} />
+            <Kpi label="Capacity conflicts" value={kpis.data.capacity_conflicts} tone={kpis.data.capacity_conflicts > 0 ? "warn" : "ok"} />
+            <Kpi label="Open alerts" value={kpis.data.open_alerts} tone={kpis.data.open_alerts > 0 ? "alert" : "ok"} />
+            <Kpi label="Active orders" value={kpis.data.orders} />
           </>
         )}
       </section>
 
+      {/* Order watchlist with deep drill-down */}
       <section className="card">
         <div className="hd">
           Order watchlist
@@ -42,28 +51,20 @@ export function Dashboard() {
         <div className="bd" style={{ padding: 0 }}>
           {watch.isLoading && <Loading />}
           {watch.isError && <ErrorState message="Couldn't load the watchlist." onRetry={() => watch.refetch()} />}
-          {watch.data && watch.data.length === 0 && (
-            <div className="state">No orders yet.</div>
-          )}
+          {watch.data && watch.data.length === 0 && <div className="state">No orders yet.</div>}
           {watch.data && watch.data.length > 0 && (
             <table>
               <thead>
                 <tr>
-                  <th>Order</th>
-                  <th>Product</th>
-                  <th>Customer</th>
-                  <th className="num">Qty</th>
-                  <th>Priority</th>
-                  <th>Committed</th>
-                  <th>Planned delivery</th>
-                  <th className="num">Buffer (h)</th>
-                  <th>Material</th>
-                  <th>Schedule</th>
+                  <th>Order</th><th>Product</th><th>Customer</th><th className="num">Qty</th>
+                  <th>Priority</th><th>Committed</th><th>Planned delivery</th>
+                  <th>Buffer</th><th>Material</th><th>Schedule</th>
                 </tr>
               </thead>
               <tbody>
                 {watch.data.map((r) => (
-                  <tr key={r.order_id}>
+                  <tr key={r.order_id} style={{ cursor: "pointer" }} onClick={() => setDrillOrder(r.order_id)}
+                      title="Click for full order detail">
                     <td className="mono">{r.order_id}</td>
                     <td>{r.product_name}</td>
                     <td>{r.customer}</td>
@@ -71,7 +72,7 @@ export function Dashboard() {
                     <td><Pill tone={statusTone(r.priority)}>{r.priority}</Pill></td>
                     <td>{fmtDate(r.committed_delivery_date)}</td>
                     <td>{fmtDate(r.planned_delivery_dt)}</td>
-                    <td className="num">{r.buffer_hrs == null ? "—" : r.buffer_hrs.toFixed(1)}</td>
+                    <td><BufferBar hrs={r.buffer_hrs} /></td>
                     <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "—"}</td>
                     <td>{r.schedule_status ? <Pill tone={statusTone(r.schedule_status)}>{r.schedule_status}</Pill> : <span className="muted">not scheduled</span>}</td>
                   </tr>
@@ -82,120 +83,315 @@ export function Dashboard() {
         </div>
       </section>
 
-      {drill && <DrillModal kind={drill} onClose={() => setDrill(null)} />}
+      {/* Three insight panels */}
+      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+        <DelayReasonsPanel />
+        <RecoveryPipelinePanel />
+        <MaterialRiskPanel />
+      </div>
+
+      {/* Capacity heatmap */}
+      <CapacityHeatmapPanel />
+
+      {drillOrder && <OrderDrillDown orderId={drillOrder} onClose={() => setDrillOrder(null)} />}
     </div>
   );
 }
 
-function DrillModal({ kind, onClose }: { kind: Exclude<Drill, null>; onClose: () => void }) {
-  const titles = {
-    orders: "Active orders",
-    alerts: "Open alerts",
-    capacity: "Capacity conflicts",
-    material: "Material at risk",
+function pct(v: number | null): "ok" | "warn" | "alert" | undefined {
+  if (v == null) return undefined;
+  if (v >= 90) return "ok";
+  if (v >= 70) return "warn";
+  return "alert";
+}
+
+function BufferBar({ hrs }: { hrs: unknown }) {
+  if (hrs == null || typeof hrs !== "number") return <span className="muted">—</span>;
+  const pctVal = Math.max(0, Math.min(100, (hrs / 72) * 100));
+  const color = hrs < 12 ? "var(--risk)" : hrs < 36 ? "var(--warn)" : "var(--ok)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div className="buffer-track" style={{ flex: 1 }}>
+        <div className="buffer-fill" style={{ width: `${pctVal}%`, background: color }} />
+      </div>
+      <span style={{ fontSize: 11, color: "var(--ink-2)", minWidth: 34, textAlign: "right" }}>{hrs.toFixed(0)}h</span>
+    </div>
+  );
+}
+
+function DelayReasonsPanel() {
+  const q = useQuery({ queryKey: ["delay-reasons"], queryFn: api.delayReasons });
+  const rows = q.data ?? [];
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  return (
+    <section className="card">
+      <div className="hd">Delay reasons</div>
+      <div className="bd">
+        {q.isLoading && <Loading />}
+        {!q.isLoading && rows.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No open deviations — nothing delayed.</div>}
+        {rows.map((r) => (
+          <div key={r.root_cause} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
+              <span>{r.root_cause}</span>
+              <span className="muted">{r.count} · {r.total_hours}h</span>
+            </div>
+            <div className="buffer-track"><div className="buffer-fill" style={{ width: `${(r.count / max) * 100}%`, background: "var(--warn)" }} /></div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecoveryPipelinePanel() {
+  const q = useQuery({ queryKey: ["recovery-pipeline"], queryFn: api.recoveryPipeline });
+  const rows = q.data ?? [];
+  return (
+    <section className="card">
+      <div className="hd">Recovery pipeline</div>
+      <div className="bd" style={{ padding: 0 }}>
+        {q.isLoading && <Loading />}
+        {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No recoveries yet.</div>}
+        {rows.length > 0 && (
+          <table>
+            <thead><tr><th>Order</th><th className="num">v</th><th>By</th><th>New delivery</th></tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="mono">{String(r.order_id)}</td>
+                  <td className="num">{String(r.version)}</td>
+                  <td>{String(r.performed_by ?? "—")}</td>
+                  <td>{fmtDate(r.new_delivery)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function MaterialRiskPanel() {
+  const q = useQuery({ queryKey: ["material-risk-panel"], queryFn: api.materialStatus });
+  const rows = (q.data ?? []).filter((m) => m.status === "risk" || m.status === "late");
+  return (
+    <section className="card">
+      <div className="hd">Material risk</div>
+      <div className="bd" style={{ padding: 0 }}>
+        {q.isLoading && <Loading />}
+        {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No material risks.</div>}
+        {rows.length > 0 && (
+          <table>
+            <thead><tr><th>Order</th><th>Status</th><th>Reason</th></tr></thead>
+            <tbody>
+              {rows.map((m) => (
+                <tr key={m.order_id}>
+                  <td className="mono">{m.order_id}</td>
+                  <td><Pill tone={statusTone(m.status)}>{m.status}</Pill></td>
+                  <td className="muted" style={{ fontSize: 12 }}>{m.risk_reason ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CapacityHeatmapPanel() {
+  const q = useQuery({ queryKey: ["capacity-heatmap"], queryFn: api.capacityHeatmap });
+  if (q.isLoading) return <section className="card"><div className="hd">Capacity heatmap</div><div className="bd"><Loading /></div></section>;
+  const data = q.data;
+  if (!data || data.grid.length === 0) return (
+    <section className="card"><div className="hd">Capacity heatmap</div><div className="state">No capacity data yet — run the optimiser to populate it.</div></section>
+  );
+  const heatColor = (v: number | null) => {
+    if (v == null) return "var(--canvas)";
+    if (v >= 100) return "rgba(180,35,24,0.85)";
+    if (v >= 85) return "rgba(180,105,14,0.75)";
+    if (v >= 60) return "rgba(180,105,14,0.35)";
+    return "rgba(34,124,78,0.30)";
   };
   return (
-    <Modal title={titles[kind]} onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
-      {kind === "orders" && <OrdersDrill />}
-      {kind === "alerts" && <AlertsDrill />}
-      {kind === "capacity" && <CapacityDrill />}
-      {kind === "material" && <MaterialDrill />}
+    <section className="card">
+      <div className="hd">Capacity heatmap — load % by work centre & day</div>
+      <div className="bd" style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "separate", borderSpacing: 2 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Work centre</th>
+              {data.dates.map((d) => <th key={d} style={{ fontSize: 10, textAlign: "center" }}>{fmtDate(d).replace(/,.*/, "")}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {data.grid.map((row) => (
+              <tr key={row.work_center}>
+                <td style={{ fontSize: 12, whiteSpace: "nowrap", borderBottom: "none" }}>{row.work_center}</td>
+                {row.cells.map((c) => (
+                  <td key={c.date} title={`${row.work_center} · ${fmtDate(c.date)} · ${c.load_pct == null ? "no load" : c.load_pct + "%"}`}
+                      style={{ background: heatColor(c.load_pct), textAlign: "center", fontSize: 10.5, minWidth: 44,
+                               color: (c.load_pct ?? 0) >= 85 ? "#fff" : "var(--ink)", borderRadius: 3, border: "none",
+                               fontWeight: c.overloaded ? 700 : 400 }}>
+                    {c.load_pct == null ? "" : `${c.load_pct}`}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-2)", flexWrap: "wrap" }}>
+          <Legend color="rgba(34,124,78,0.30)" label="< 60%" />
+          <Legend color="rgba(180,105,14,0.35)" label="60–85%" />
+          <Legend color="rgba(180,105,14,0.75)" label="85–100%" />
+          <Legend color="rgba(180,35,24,0.85)" label="≥ 100% (overloaded)" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+    <span style={{ width: 14, height: 14, background: color, borderRadius: 3, display: "inline-block" }} /> {label}
+  </span>;
+}
+
+function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+  const q = useQuery({ queryKey: ["order-detail", orderId], queryFn: () => api.orderDetail(orderId) });
+  const d = q.data;
+  return (
+    <Modal title={`Order ${orderId}`} onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
+      {q.isLoading && <Loading label="Loading order detail…" />}
+      {d && (
+        <div className="stack" style={{ maxHeight: "70vh", overflowY: "auto" }}>
+          {/* Order & status */}
+          <Section title="Order & status">
+            <KV pairs={[
+              ["Customer", str(d.order?.customer)],
+              ["Quantity", str(d.order?.order_qty)],
+              ["Priority", str(d.order?.priority)],
+              ["Product", str(d.product?.name)],
+              ["Committed delivery", fmtDate(d.order?.committed_delivery_date)],
+              ["Status", str(d.order?.status)],
+            ]} />
+          </Section>
+
+          {/* Schedule */}
+          <Section title="Schedule">
+            {d.schedule ? (
+              <KV pairs={[
+                ["Version", str(d.schedule.baseline_version)],
+                ["Material ready", fmtDT(d.schedule.planned_material_ready_dt)],
+                ["Production start", fmtDT(d.schedule.planned_prod_start_dt)],
+                ["Production end", fmtDT(d.schedule.planned_prod_end_dt)],
+                ["Dispatch", fmtDT(d.schedule.planned_dispatch_dt)],
+                ["Delivery", fmtDT(d.schedule.planned_delivery_dt)],
+                ["Buffer (hrs)", str(d.schedule.buffer_hrs)],
+              ]} />
+            ) : <Empty text="Not scheduled yet — run the optimiser." />}
+          </Section>
+
+          {/* Risk signals */}
+          <Section title={`Risk signals detected (${d.risk_signals.length})`}>
+            {d.risk_signals.length === 0 ? <Empty text="No deviations detected." /> : (
+              <table><thead><tr><th>Milestone</th><th>Severity</th><th>Cause</th><th>Status</th></tr></thead>
+                <tbody>{d.risk_signals.map((r, i) => (
+                  <tr key={i}>
+                    <td>{str(r.milestone_name)}</td>
+                    <td><Pill tone={statusTone(str(r.severity))}>{str(r.severity)}</Pill></td>
+                    <td className="muted">{str(r.root_cause_code) || "—"}</td>
+                    <td>{str(r.resolution_status)}</td>
+                  </tr>
+                ))}</tbody></table>
+            )}
+          </Section>
+
+          {/* Operation sequence */}
+          <Section title={`Operation sequence (${d.operations.length})`}>
+            {d.operations.length === 0 ? <Empty text="No operations." /> : (
+              <table><thead><tr><th className="num">Seq</th><th>Work centre</th><th>Start</th><th>End</th><th className="num">Mins</th></tr></thead>
+                <tbody>{d.operations.map((op, i) => (
+                  <tr key={i}>
+                    <td className="num">{str(op.operation_seq)}</td>
+                    <td>{str(op.work_center)}</td>
+                    <td>{fmtDT(op.planned_start)}</td>
+                    <td>{fmtDT(op.planned_end)}</td>
+                    <td className="num">{str(op.duration_mins)}</td>
+                  </tr>
+                ))}</tbody></table>
+            )}
+          </Section>
+
+          {/* Material & BOM */}
+          <Section title={`Material & BOM (${d.bom.length})`}>
+            {d.material && (
+              <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+                Material status: <Pill tone={statusTone(str(d.material.status))}>{str(d.material.status)}</Pill>
+                {d.material.risk_reason ? ` — ${str(d.material.risk_reason)}` : ""}
+              </p>
+            )}
+            {d.bom.length === 0 ? <Empty text="No bill of materials." /> : (
+              <table><thead><tr><th>Material</th><th className="num">Qty/unit</th><th>UoM</th><th>Supplier</th><th className="num">Lead days</th></tr></thead>
+                <tbody>{d.bom.map((b, i) => (
+                  <tr key={i}>
+                    <td>{str(b.material)}</td><td className="num">{str(b.qty_per_unit)}</td>
+                    <td>{str(b.uom)}</td><td>{str(b.supplier)}</td><td className="num">{str(b.lead_days)}</td>
+                  </tr>
+                ))}</tbody></table>
+            )}
+          </Section>
+
+          {/* Execution events */}
+          <Section title={`Execution events (${d.events.length})`}>
+            {d.events.length === 0 ? <Empty text="No execution events logged." /> : (
+              <table><thead><tr><th>Event</th><th>When</th><th className="num">Op</th><th className="num">Qty</th><th>By</th></tr></thead>
+                <tbody>{d.events.map((e, i) => (
+                  <tr key={i}>
+                    <td><Pill tone="info">{str(e.event_type)}</Pill></td>
+                    <td>{fmtDT(e.event_timestamp)}</td>
+                    <td className="num">{str(e.operation_seq) || "—"}</td>
+                    <td className="num">{str(e.event_qty) || "—"}</td>
+                    <td className="muted">{str(e.entered_by) || "—"}</td>
+                  </tr>
+                ))}</tbody></table>
+            )}
+          </Section>
+        </div>
+      )}
     </Modal>
   );
 }
 
-function OrdersDrill() {
-  const q = useQuery({ queryKey: ["drill-orders"], queryFn: () => api.listOrders() });
-  if (q.isLoading) return <Loading />;
-  const rows = q.data ?? [];
-  if (rows.length === 0) return <div className="state">No orders.</div>;
+function str(v: unknown): string {
+  if (v == null) return "";
+  return String(v);
+}
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <table>
-      <thead><tr><th>Order</th><th>Customer</th><th className="num">Qty</th><th>Priority</th><th>Due</th></tr></thead>
-      <tbody>
-        {rows.map((o) => (
-          <tr key={o.order_id}>
-            <td className="mono">{o.order_id}</td><td>{o.customer}</td>
-            <td className="num">{o.order_qty}</td><td>{o.priority}</td>
-            <td>{fmtDate(o.committed_delivery_date)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--teal)", marginBottom: 6, borderBottom: "1px solid var(--line)", paddingBottom: 4 }}>{title}</div>
+      {children}
+    </div>
   );
 }
-
-function AlertsDrill() {
-  const q = useQuery({ queryKey: ["drill-alerts"], queryFn: () => api.alerts(false, "open") });
-  if (q.isLoading) return <Loading />;
-  const rows = q.data ?? [];
-  if (rows.length === 0) return <div className="state">No open alerts.</div>;
+function KV({ pairs }: { pairs: Array<[string, string]> }) {
   return (
-    <table>
-      <thead><tr><th>Type</th><th>Alert</th><th>Detail</th></tr></thead>
-      <tbody>
-        {rows.map((a) => (
-          <tr key={a.dedup_key}>
-            <td><Pill tone={a.alert_type === "crit" ? "risk" : "warn"}>{a.alert_type}</Pill></td>
-            <td>{a.title}</td><td className="muted" style={{ fontSize: 12.5 }}>{a.meta}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <table><tbody>
+      {pairs.map(([k, v]) => (
+        <tr key={k}><td className="muted" style={{ width: "45%" }}>{k}</td><td>{v || "—"}</td></tr>
+      ))}
+    </tbody></table>
   );
 }
-
-function CapacityDrill() {
-  const q = useQuery({ queryKey: ["drill-capacity"], queryFn: () => api.capacityConflicts() });
-  if (q.isLoading) return <Loading />;
-  const rows = q.data ?? [];
-  if (rows.length === 0) return <div className="state">No capacity conflicts.</div>;
-  return (
-    <table>
-      <thead><tr><th>Work center</th><th>Date</th><th className="num">Load %</th></tr></thead>
-      <tbody>
-        {rows.map((c, i) => (
-          <tr key={i}>
-            <td>{String(c.work_center)}</td>
-            <td>{fmtDate(String(c.load_date))}</td>
-            <td className="num">{c.load_pct != null ? `${Number(c.load_pct).toFixed(0)}%` : "—"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+function Empty({ text }: { text: string }) {
+  return <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>{text}</p>;
 }
 
-function MaterialDrill() {
-  const q = useQuery({ queryKey: ["drill-material"], queryFn: () => api.materialStatus() });
-  if (q.isLoading) return <Loading />;
-  const rows = (q.data ?? []).filter((m) => m.status === "risk" || m.status === "late");
-  if (rows.length === 0) return <div className="state">No orders at material risk.</div>;
+function Kpi({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "alert" }) {
   return (
-    <table>
-      <thead><tr><th>Order</th><th>Status</th><th>Planned ready</th><th>Reason</th></tr></thead>
-      <tbody>
-        {rows.map((m) => (
-          <tr key={m.order_id}>
-            <td className="mono">{m.order_id}</td>
-            <td><Pill tone={statusTone(m.status)}>{m.status}</Pill></td>
-            <td>{fmtDate(m.planned_ready_dt)}</td>
-            <td className="muted">{m.risk_reason ?? "—"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function Kpi({ label, value, tone, onClick }: { label: string; value: number; tone?: "alert" | "warn"; onClick?: () => void }) {
-  return (
-    <div
-      className={`kpi ${tone ?? ""}`}
-      onClick={onClick}
-      style={onClick ? { cursor: "pointer" } : undefined}
-      title={onClick ? "Click to see details" : undefined}
-    >
+    <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}>
       <div className="v">{value}</div>
       <div className="l">{label}</div>
     </div>
