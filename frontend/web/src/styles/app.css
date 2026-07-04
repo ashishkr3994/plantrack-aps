@@ -166,3 +166,67 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ===== Tier 1 UI: clock, theme toggle, profile menu ===== */
+.clock {
+  display: flex; flex-direction: column; align-items: flex-end;
+  line-height: 1.1; padding-right: 4px;
+}
+.clock-time { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.clock-date { font-size: 11px; color: var(--ink-2); }
+
+.icon-btn { font-size: 16px; padding: 6px 10px; }
+
+.profile-wrap { position: relative; }
+.avatar-btn {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 10px 4px 4px; cursor: pointer; color: var(--ink);
+}
+.avatar-btn:hover { background: var(--teal-lt); }
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--teal); color: #fff; font-size: 12px; font-weight: 700;
+}
+.avatar.lg { width: 40px; height: 40px; font-size: 15px; }
+.avatar.xl { width: 56px; height: 56px; font-size: 20px; }
+.avatar-name { font-size: 13px; font-weight: 500; }
+.avatar-caret { font-size: 10px; color: var(--ink-2); }
+
+.menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+.profile-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 50;
+  min-width: 220px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow); padding: 8px;
+}
+.profile-head { display: flex; align-items: center; gap: 12px; padding: 8px; }
+.profile-name { font-weight: 600; color: var(--ink); }
+.profile-role { margin-top: 2px; }
+.menu-item {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; padding: 9px 10px; border-radius: var(--r-sm); cursor: pointer;
+  color: var(--ink); font-size: 13.5px;
+}
+.menu-item:hover { background: var(--teal-lt); }
+.menu-item.danger { color: var(--risk); }
+.menu-item.danger:hover { background: var(--risk-bg); }
+.menu-sep { height: 1px; background: var(--line); margin: 6px 4px; }
+
+/* ===== Dark mode: override the CSS variables ===== */
+[data-theme="dark"] {
+  --teal: #3fb0bd;
+  --teal-dk: #2b8a96;
+  --teal-lt: #16323a;
+  --ink: #e6edf1;
+  --ink-2: #9fb0bd;
+  --line: #2a3a44;
+  --surface: #16222b;
+  --canvas: #0f1a21;
+  --ok: #4cc38a; --ok-bg: #10331f;
+  --warn: #e0a13c; --warn-bg: #3a2c12;
+  --risk: #f27a6e; --risk-bg: #3a1a17;
+  --info: #3fb0bd;
+  --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 2px 12px rgba(0,0,0,0.3);
+}
+[data-theme="dark"] body { background: var(--canvas); color: var(--ink); }
