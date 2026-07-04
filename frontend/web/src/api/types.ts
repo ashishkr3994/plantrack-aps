@@ -334,3 +334,35 @@ export interface RescheduleLogRow {
   performed_by: string | null;
   performed_at: string | null;
 }
+
+// --- Tier 2: richer dashboard ---
+export interface DashboardKpis {
+  orders: number;
+  products: number;
+  scheduled: number;
+  schedule_adherence_pct: number | null;
+  on_time_delivery_pct: number | null;
+  orders_at_risk: number;
+  delayed_critical: number;
+  material_at_risk: number;
+  capacity_conflicts: number;
+  open_alerts: number;
+}
+
+export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
+export interface CapacityHeatmap {
+  work_centers: string[];
+  dates: string[];
+  grid: Array<{ work_center: string; cells: HeatmapCell[] }>;
+}
+
+export interface OrderDetail {
+  order: Record<string, unknown> | null;
+  product: Record<string, unknown> | null;
+  schedule: Record<string, unknown> | null;
+  operations: Array<Record<string, unknown>>;
+  risk_signals: Array<Record<string, unknown>>;
+  material: Record<string, unknown> | null;
+  bom: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+}
