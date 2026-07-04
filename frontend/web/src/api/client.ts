@@ -7,6 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow,
+  DashboardKpis, CapacityHeatmap, OrderDetail,
 } from "./types";
 
 // In dev, Vite proxies /api -> backend. In prod, set VITE_API_BASE.
@@ -94,6 +95,11 @@ export const api = {
   watchlist: () => request<WatchlistRow[]>("/dashboard/watchlist"),
   capacityConflicts: () => request<Record<string, unknown>[]>("/dashboard/capacity-conflicts"),
   openAlerts: () => request<Record<string, unknown>[]>("/dashboard/open-alerts"),
+  kpis: () => request<DashboardKpis>("/dashboard/kpis"),
+  delayReasons: () => request<Array<{ root_cause: string; count: number; total_hours: number }>>("/dashboard/delay-reasons"),
+  recoveryPipeline: () => request<Array<Record<string, unknown>>>("/dashboard/recovery-pipeline"),
+  capacityHeatmap: () => request<CapacityHeatmap>("/dashboard/capacity-heatmap"),
+  orderDetail: (orderId: string) => request<OrderDetail>(`/dashboard/order-detail/${orderId}`),
 
   // products
   listProducts: () => request<Product[]>("/products"),
@@ -186,3 +192,4 @@ export const api = {
   updateUser: (id: number, patch: { full_name?: string; role?: string; is_active?: boolean; password?: string }) =>
     request<AuthUser>(`/auth/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };
+
