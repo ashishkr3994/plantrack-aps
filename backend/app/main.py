@@ -64,7 +64,24 @@ def _startup() -> None:
     # single-process deployments (e.g. Render free tier) run the periodic scan
     # in-process since there's no separate Celery beat worker.
     start_if_enabled()
-
+    # auto-seed demo data on first boot when the database has no users yet
+    # (safe: only runs when empty, so it never duplicates or overwrites data)
+    try:
+        import pathlib
+        from sqlalchemy import text
+        from .database import engine
+        with engine.connect() as conn:
+            user_count = conn.execute(text("SELECT count(*) FROM app_user")).scalar()
+        if not user_count:
+            repo = pathlib.Path(__file__).resolve().parents[2]
+            seeds = [repo / "db" / "seeds" / "0001_sample_data.sql",
+                     repo / "db" / "seeds" / "0002_users.sql"]
+            with engine.begin() as conn:
+                for f in seeds:
+                    conn.execute(text(f.read_text()))
+            print("[startup] demo data seeded (first boot)")
+    except Exception as e:
+        print(f"[startup] auto-seed skipped: {e}")
 
 @app.get("/health", tags=["meta"])
 def health():
