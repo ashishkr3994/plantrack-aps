@@ -366,3 +366,15 @@ export interface OrderDetail {
   bom: Array<Record<string, unknown>>;
   events: Array<Record<string, unknown>>;
 }
+
+// --- Tier 2b: capacity cell drill-down + event logging ---
+export interface CapacityCell {
+  work_center: string;
+  load_date: string;
+  load: { available_min: number; demand_min: number; load_pct: number; overloaded: boolean } | null;
+  operations: Array<{
+    order_id: string; customer: string; priority: string;
+    operation_seq: number; work_center: string; duration_mins: number;
+    planned_start: string; planned_end: string;
+  }>;
+}
