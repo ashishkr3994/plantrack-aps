@@ -12,6 +12,7 @@ if config.config_file_name is not None:
 
 db_url = os.environ.get("DATABASE_URL",
                         "postgresql+psycopg://plantrack:plantrack@localhost:5432/plantrack")
+db_url = db_url.replace("postgres://", "postgresql+psycopg://").replace("postgresql://", "postgresql+psycopg://")
 config.set_main_option("sqlalchemy.url", db_url)
 
 # app metadata (for autogenerate; the initial revisions apply the existing SQL)
