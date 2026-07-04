@@ -163,7 +163,7 @@ export const api = {
   importOrders: (csv: string) => request<ImportResult>("/import/orders", { method: "POST", body: JSON.stringify({ csv }) }),
 
   // what-if sandbox
-  simulate: (body: { overrides: SandboxOverride[]; mode?: string; time_budget_s?: number }) =>
+  simulate: (body: { overrides: SandboxOverride[]; mode?: string; time_budget_s?: number; overtime_hrs_per_day?: number }) =>
     request<SandboxResult>("/sandbox/simulate", { method: "POST", body: JSON.stringify(body) }),
 
   // alerts & deviations
