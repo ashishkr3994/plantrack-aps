@@ -1,160 +1,34 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/api/client";
-import type { ImportResult } from "@/api/types";
+import { useQuery } from "@tanstack/react-query";
+import { useProducts, useBom, useCreateBom, useUpdateBom, useDeleteBom } from "@/hooks/queries";
+import { Loading, ErrorState, Empty, Modal, Pill, statusTone } from "@/components/ui";
+import { ApiError, api } from "@/api/client";
+import type { BomLine } from "@/api/types";
 import { useAuth } from "@/hooks/useAuth";
-import { downloadRawCSV, downloadCSV, IMPORT_TEMPLATES } from "@/lib/csv";
 
-type Kind = "orders" | "products" | "bom";
-
-const TEMPLATES: Record<Kind, string> = {
-  orders: "order_id,product_id,customer,order_qty,order_date,committed_delivery_date,priority,plant\nORD-9001,P-1001,Acme,250,2026-07-05,2026-07-30,HIGH,Plant A",
-  products: "product_id,name,family,route_id\nP-2001,New Widget,Mechanical,R-STD-01",
-  bom: "product_id,material,qty_per_unit,uom,supplier,lead_days\nP-2001,Steel plate,1.5,kg,SteelCo,5",
-};
-
-const LABELS: Record<Kind, string> = { orders: "Orders", products: "Products", bom: "Bill of materials" };
-
-export function ImportData() {
-  const { hasRole } = useAuth();
-  const qc = useQueryClient();
-  const [kind, setKind] = useState<Kind>("orders");
-  const [text, setText] = useState("");
-  const [result, setResult] = useState<ImportResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const canImport = hasRole("planner");
-
-  const onFile = async (file: File) => {
-    setText(await file.text());
-    setResult(null);
-    setError(null);
-  };
-
-  const run = async () => {
-    setError(null);
-    setResult(null);
-    if (!text.trim()) {
-      setError("Paste CSV or choose a file first.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const fn = kind === "orders" ? api.importOrders : kind === "products" ? api.importProducts : api.importBom;
-      const res = await fn(text);
-      setResult(res);
-      // refresh affected views
-      qc.invalidateQueries();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Import failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="stack">
-      <h2>Import data</h2>
-      {!canImport && <div className="banner err">Importing requires the planner role. You can view templates below.</div>}
-
-      <section className="card">
-        <div className="hd">CSV import</div>
-        <div className="bd stack">
-          <p className="muted" style={{ margin: 0 }}>
-            Bring in orders, products, or bills of materials from CSV — the data feed
-            for now, standing in for an ERP connection. Imports skip rows whose key
-            already exists, and report any row-level problems.
-          </p>
-
-          <div className="row" style={{ gap: 12 }}>
-            <div style={{ width: 220 }}>
-              <label>What are you importing?</label>
-              <select value={kind} onChange={(e) => { setKind(e.target.value as Kind); setResult(null); setError(null); }}>
-                <option value="orders">Orders</option>
-                <option value="products">Products</option>
-                <option value="bom">Bill of materials</option>
-              </select>
-            </div>
-            <div style={{ alignSelf: "flex-end" }}>
-              <input type="file" accept=".csv,text/csv" disabled={!canImport}
-                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-            </div>
-          </div>
-
-          <div>
-            <label>{LABELS[kind]} CSV</label>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              disabled={!canImport}
-              spellCheck={false}
-              style={{ width: "100%", minHeight: 160, fontFamily: "var(--mono)", fontSize: 12.5,
-                       padding: 10, border: "1px solid var(--line)", borderRadius: "var(--r-sm)", resize: "vertical" }}
-              placeholder={TEMPLATES[kind]}
-            />
-            <div className="row" style={{ justifyContent: "space-between", marginTop: 6 }}>
-              <div className="row" style={{ gap: 8 }}>
-                <button className="ghost" onClick={() => setText(TEMPLATES[kind])}>Insert template</button>
-                <button className="ghost" onClick={() => downloadRawCSV(`${kind}_template.csv`, IMPORT_TEMPLATES[kind])}>
-                  Download template
-                </button>
-              </div>
-              <button className="primary" onClick={run} disabled={!canImport || busy}>
-                {busy ? "Importing…" : `Import ${LABELS[kind].toLowerCase()}`}
-              </button>
-            </div>
-          </div>
-
-          {error && <div className="banner err">{error}</div>}
-          {result && (
-            <div className={`banner ${result.errors.length ? "live" : "ok"}`}>
-              <strong>Imported {result.imported}</strong>, skipped {result.skipped} (already existed).
-              {result.errors.length > 0 && (
-                <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                  {result.errors.map((er, i) => <li key={i} style={{ fontSize: 12.5 }}>{er}</li>)}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="hd">Export current data</div>
-        <div className="bd stack">
-          <p className="muted" style={{ margin: 0 }}>
-            Download what's in the system now as CSV — useful for backups, sharing,
-            or re-importing into another environment.
-          </p>
-          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            <button className="ghost" onClick={async () => {
-              const orders = await api.listOrders();
-              downloadCSV("orders_export.csv", orders as unknown as Record<string, unknown>[],
-                ["order_id", "customer", "order_qty", "priority", "order_date", "committed_delivery_date", "status"]);
-            }}>Export orders</button>
-            <button className="ghost" onClick={async () => {
-              const products = await api.listProducts();
-              downloadCSV("products_export.csv", products as unknown as Record<string, unknown>[],
-                ["product_id", "name", "family"]);
-            }}>Export products</button>
-            <button className="ghost" onClick={async () => {
-              const mat = await api.materialStatus();
-              downloadCSV("material_status_export.csv", mat as unknown as Record<string, unknown>[],
-                ["order_id", "status", "planned_ready_dt", "actual_ready_dt", "slip_days", "risk_reason"]);
-            }}>Export material status</button>
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="hd">Expected columns</div>
-        <div className="bd">
-          <pre className="mono" style={{ margin: 0, fontSize: 12.5, whiteSpace: "pre-wrap", color: "var(--ink-2)" }}>
-            {TEMPLATES[kind]}
-          </pre>
-        </div>
-      </section>
-    </div>
-  );
-}
+function MaterialRiskPanel() {  
+  const status = useQuery({ queryKey: ["material-status"], queryFn: api.materialStatus });  
+  const atRisk = (status.data ?? []).filter((m) => m.status === "risk" || m.status === "late");  
+  return (    
+    <section className="card">      
+      <div className="hd">        
+        Material risk        
+        {status.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing…</span>}
+         </div>      <div className="bd" style={{ padding: 0 }}>        {status.isLoading && <Loading />}        {status.isError && <ErrorState message="Couldn't load material status." onRetry={() => status.refetch()} />}        {status.data && atRisk.length === 0 && (          <div className="state">No orders at material risk. All confirmed or comfortably ahead of need.</div>        )}        {atRisk.length > 0 && (          <table>            <thead>              <tr><th>Order</th><th>Status</th><th>Planned ready</th><th className="num">Slip (days)</th><th>Reason</th></tr>            </thead>            <tbody>              {atRisk.map((m) => (                <tr key={m.order_id}>                  <td className="mono">{m.order_id}</td>                  <td><Pill tone={statusTone(m.status)}>{m.status}</Pill></td>                  <td>{m.planned_ready_dt ? new Date(m.planned_ready_dt).toLocaleDateString() : "—"}</td>                  <td className="num">{m.slip_days || "—"}</td>                  <td className="muted">{m.risk_reason ?? "—"}</td>                </tr>              ))}            </tbody>          </table>        )}      </div>    </section>  );}
+export function Materials() {  const products = useProducts();  const [pid, setPid] = useState<number | undefined>(undefined);
+  const { hasRole } = useAuth();  const canEdit = hasRole("planner");  const selected = pid ?? products.data?.[0]?.id;  const bom = useBom(selected);
+  const [editing, setEditing] = useState<BomLine | null>(null);  const [creating, setCreating] = useState(false);  const [confirmDelete, setConfirmDelete] = useState<BomLine | null>(null);
+  const del = useDeleteBom(selected);
+  return (    <div className="stack">      <h2>Materials & BOM</h2>
+      <MaterialRiskPanel />
+      <div className="spread">        <h3>Bill of materials by product</h3>        <div className="row" style={{ gap: 10 }}>          <div style={{ width: 300 }}>            <select              value={selected ?? ""}              onChange={(e) => setPid(Number(e.target.value))}              disabled={products.isLoading}            >              {products.isLoading && <option>Loading products…</option>}              {products.data?.map((p) => (                <option key={p.id} value={p.id}>{p.product_id} — {p.name}</option>              ))}            </select>          </div>          {canEdit && <button className="primary" onClick={() => setCreating(true)} disabled={selected == null}>            Add material          </button>}        </div>      </div>
+      <section className="card">        <div className="hd">Bill of materials</div>        <div className="bd" style={{ padding: 0 }}>          {bom.isLoading && <Loading />}          {bom.isError && <ErrorState message="Couldn't load the BOM." onRetry={() => bom.refetch()} />}          {bom.data && bom.data.length === 0 && (            <Empty              message="No materials defined for this product yet."              action={<button className="primary" onClick={() => setCreating(true)}>Add the first material</button>}            />          )}          {bom.data && bom.data.length > 0 && (            <table>              <thead>                <tr>                  <th>Material</th><th className="num">Qty / unit</th><th>UoM</th>                  <th>Supplier</th><th className="num">Lead (days)</th><th style={{ width: 130 }}>Actions</th>                </tr>              </thead>              <tbody>                {bom.data.map((b) => (                  <tr key={b.id}>                    <td>{b.material}</td>                    <td className="num">{b.qty_per_unit}</td>                    <td>{b.uom}</td>                    <td>{b.supplier ?? "—"}</td>                    <td className="num">{b.lead_days}</td>                    <td>                      {canEdit ? (                        <div className="row" style={{ gap: 6 }}>                          <button className="ghost" onClick={() => setEditing(b)}>Edit</button>                          <button className="ghost danger" onClick={() => setConfirmDelete(b)}>Delete</button>                        </div>                      ) : <span className="muted">—</span>}                    </td>                  </tr>                ))}              </tbody>            </table>          )}        </div>      </section>
+      {creating && selected != null && (        <BomModal productId={selected} onClose={() => setCreating(false)} />      )}      {editing && (        <BomModal productId={selected!} existing={editing} onClose={() => setEditing(null)} />      )}      {confirmDelete && (        <Modal          title="Delete material"          onClose={() => setConfirmDelete(null)}          footer={            <>              <button onClick={() => setConfirmDelete(null)} disabled={del.isPending}>Cancel</button>              <button                className="primary danger"                disabled={del.isPending}                onClick={async () => {                  await del.mutateAsync(confirmDelete.id);                  setConfirmDelete(null);                }}              >                {del.isPending ? "Deleting…" : "Delete"}              </button>            </>          }        >          <p>Remove <strong>{confirmDelete.material}</strong> from this product's bill of materials?</p>        </Modal>      )}    </div>  );}
+interface FormState {  material: string;  qty_per_unit: string;  uom: string;  supplier: string;  lead_days: string;}
+function BomModal({  productId, existing, onClose,}: { productId: number; existing?: BomLine; onClose: () => void }) {  const isEdit = !!existing;  const create = useCreateBom(productId);  const update = useUpdateBom(productId);  const busy = create.isPending || update.isPending;
+  const [form, setForm] = useState<FormState>({    material: existing?.material ?? "",    qty_per_unit: existing ? String(existing.qty_per_unit) : "",    uom: existing?.uom ?? "",    supplier: existing?.supplier ?? "",    lead_days: existing ? String(existing.lead_days) : "0",  });  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});  const [submitError, setSubmitError] = useState<string | null>(null);
+  const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>    setForm((f) => ({ ...f, [k]: v }));
+  const validate = (): boolean => {    const e: Partial<Record<keyof FormState, string>> = {};    if (!form.material.trim()) e.material = "Required.";    const qty = Number(form.qty_per_unit);    if (!form.qty_per_unit || Number.isNaN(qty) || qty <= 0) e.qty_per_unit = "Must be greater than 0.";    if (!form.uom.trim()) e.uom = "Required.";    const lead = Number(form.lead_days);    if (form.lead_days === "" || Number.isNaN(lead) || lead < 0) e.lead_days = "Must be 0 or more.";    setErrors(e);    return Object.keys(e).length === 0;  };
+  const submit = async () => {    setSubmitError(null);    if (!validate()) return;    try {      if (isEdit && existing) {        await update.mutateAsync({          pk: existing.id,          patch: {            material: form.material.trim(),            qty_per_unit: Number(form.qty_per_unit),            uom: form.uom.trim(),            supplier: form.supplier.trim() || null,            lead_days: Number(form.lead_days),          },        });      } else {        await create.mutateAsync({          product_id: productId,          material: form.material.trim(),          qty_per_unit: Number(form.qty_per_unit),          uom: form.uom.trim(),          supplier: form.supplier.trim() || null,          lead_days: Number(form.lead_days),        });      }      onClose();    } catch (err) {      setSubmitError(err instanceof ApiError ? err.message : "Couldn't save the material.");    }  };
+  return (    <Modal      title={isEdit ? "Edit material" : "Add material"}      onClose={onClose}      footer={        <>          <button onClick={onClose} disabled={busy}>Cancel</button>          <button className="primary" onClick={submit} disabled={busy}>            {busy ? "Saving…" : isEdit ? "Save changes" : "Add material"}          </button>        </>      }    >      {submitError && <div className="banner err">{submitError}</div>}      <Field label="Material" error={errors.material}>        <input value={form.material} onChange={(e) => set("material", e.target.value)} placeholder="Cast iron blank" />      </Field>      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>        <Field label="Quantity per unit" error={errors.qty_per_unit}>          <input type="number" step="any" min={0} value={form.qty_per_unit} onChange={(e) => set("qty_per_unit", e.target.value)} />        </Field>        <Field label="Unit of measure" error={errors.uom}>          <input value={form.uom} onChange={(e) => set("uom", e.target.value)} placeholder="kg / pcs / set" />        </Field>        <Field label="Supplier">          <input value={form.supplier} onChange={(e) => set("supplier", e.target.value)} placeholder="optional" />        </Field>        <Field label="Lead time (days)" error={errors.lead_days}>          <input type="number" min={0} value={form.lead_days} onChange={(e) => set("lead_days", e.target.value)} />        </Field>      </div>    </Modal>  );}
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {  return (    <div>      <label>{label}</label>      {children}      {error && <div className="field-err">{error}</div>}    </div>  );}
