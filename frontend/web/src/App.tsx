@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { NavLink, Route, Routes, Navigate } from "react-router-dom";
 import { useLiveUpdates } from "./hooks/useLiveUpdates";
@@ -11,6 +12,7 @@ import { Schedule } from "./screens/Schedule";
 import { Capacity } from "./screens/Capacity";
 import { Materials } from "./screens/Materials";
 import { Reschedule } from "./screens/Reschedule";
+import { Events } from "./screens/Events";
 import { Analytics } from "./screens/Analytics";
 import { Configuration } from "./screens/Configuration";
 import { Admin } from "./screens/Admin";
@@ -26,6 +28,7 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: "/capacity", label: "Capacity" },
   { to: "/materials", label: "Materials & BOM" },
   { to: "/reschedule", label: "Reschedule" },
+  { to: "/events", label: "Execution events" },
   { to: "/analytics", label: "Analytics" },
   { to: "/sandbox", label: "What-if sandbox" },
   { to: "/import", label: "Import data" },
@@ -233,6 +236,7 @@ export function App() {
             <Route path="/capacity" element={<Capacity />} />
             <Route path="/materials" element={<Materials />} />
             <Route path="/reschedule" element={<Reschedule />} />
+            <Route path="/events" element={<Events />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/configuration" element={<Configuration />} />
             <Route path="/sandbox" element={<Sandbox />} />
