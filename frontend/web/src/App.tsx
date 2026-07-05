@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { NavLink, Route, Routes, Navigate } from "react-router-dom";
 import { useLiveUpdates } from "./hooks/useLiveUpdates";
@@ -13,6 +12,8 @@ import { Capacity } from "./screens/Capacity";
 import { Materials } from "./screens/Materials";
 import { Reschedule } from "./screens/Reschedule";
 import { Events } from "./screens/Events";
+import { DataModel } from "./screens/DataModel";
+import { MasterData } from "./screens/MasterData";
 import { Analytics } from "./screens/Analytics";
 import { Configuration } from "./screens/Configuration";
 import { Admin } from "./screens/Admin";
@@ -33,6 +34,8 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: "/sandbox", label: "What-if sandbox" },
   { to: "/import", label: "Import data" },
   { to: "/configuration", label: "Configuration" },
+  { to: "/master-data", label: "Master data" },
+  { to: "/data-model", label: "Data model" },
 ];
 
 function LiveBadge() {
@@ -237,6 +240,8 @@ export function App() {
             <Route path="/materials" element={<Materials />} />
             <Route path="/reschedule" element={<Reschedule />} />
             <Route path="/events" element={<Events />} />
+            <Route path="/master-data" element={<MasterData />} />
+            <Route path="/data-model" element={<DataModel />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/configuration" element={<Configuration />} />
             <Route path="/sandbox" element={<Sandbox />} />
