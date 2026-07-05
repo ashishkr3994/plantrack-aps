@@ -378,3 +378,10 @@ export interface CapacityCell {
     planned_start: string; planned_end: string;
   }>;
 }
+
+// --- master-data import result ---
+export interface ImportResultT {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
