@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from .config import settings, enforce_production_safety
 from .database import engine
-from .routers import (products, orders, bom, events, routings, dashboard, schedule,
+from .routers import (products, orders, bom, events, routings, dashboard, schedule, datamodel,
                       auth, audit, materials, imports, sandbox, alerts)
 from .ws import router as ws_router
 from .inproc_scheduler import start_if_enabled
@@ -56,6 +56,7 @@ app.include_router(materials.router)
 app.include_router(imports.router)
 app.include_router(sandbox.router)
 app.include_router(alerts.router)
+app.include_router(datamodel.router)
 app.include_router(ws_router)
 
 
@@ -64,24 +65,6 @@ def _startup() -> None:
     # single-process deployments (e.g. Render free tier) run the periodic scan
     # in-process since there's no separate Celery beat worker.
     start_if_enabled()
-    # auto-seed demo data on first boot when the database has no users yet
-    # (safe: only runs when empty, so it never duplicates or overwrites data)
-    try:
-        import pathlib
-        from sqlalchemy import text
-        from .database import engine
-        with engine.connect() as conn:
-            user_count = conn.execute(text("SELECT count(*) FROM app_user")).scalar()
-        if not user_count:
-            repo = pathlib.Path(__file__).resolve().parents[2]
-            seeds = [repo / "db" / "seeds" / "0001_sample_data.sql",
-                     repo / "db" / "seeds" / "0002_users.sql"]
-            with engine.begin() as conn:
-                for sf in seeds:
-                    conn.execute(text(sf.read_text()))
-            print("[startup] demo data seeded (first boot)")
-    except Exception as e:
-        print(f"[startup] auto-seed skipped: {e}")
 
 
 @app.get("/health", tags=["meta"])
