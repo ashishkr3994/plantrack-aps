@@ -155,3 +155,157 @@ def import_orders(body: CsvPayload, actor: models.AppUser = Depends(require_role
     evaluate_material_risk(db)
     audit(db, actor, "import", "order", None, {"imported": imported, "skipped": skipped})
     return ImportResult(imported=imported, skipped=skipped, errors=errors)
+
+
+# ===================================================================
+#  Master data: calendar, lead-time master, routing & operations
+#  (import from CSV + export current rows as JSON for CSV download)
+# ===================================================================
+
+def _export(db, sql):
+    res = db.execute(__import__("sqlalchemy").text(sql))
+    cols = list(res.keys())
+    return [dict(zip(cols, r)) for r in res.fetchall()]
+
+
+# ---- Lead-time master ----
+@router.post("/lead-times", response_model=ImportResult)
+def import_lead_times(body: CsvPayload, actor: models.AppUser = Depends(require_role("planner")),
+                      db: Session = Depends(get_db)):
+    imported = skipped = 0
+    errors: list[str] = []
+    existing = {lt.product_family for lt in db.query(models.LeadTimeMaster).all()}
+    for i, row in enumerate(_rows(body.csv), 1):
+        fam = (row.get("product_family") or "").strip()
+        if not fam:
+            errors.append(f"row {i}: missing product_family")
+            continue
+        if fam in existing:
+            skipped += 1
+            continue
+        try:
+            db.add(models.LeadTimeMaster(
+                product_family=fam,
+                inbound_days=float(row.get("inbound_days") or 0),
+                qa_days=float(row.get("qa_days") or 0),
+                packing_days=float(row.get("packing_days") or 0),
+                transport_days=float(row.get("transport_days") or 0),
+                buffer_days=float(row.get("buffer_days") or 0)))
+            imported += 1
+        except ValueError:
+            errors.append(f"row {i}: numeric fields must be numbers")
+    db.commit()
+    audit(db, actor, "import", "lead_time_master", None, {"imported": imported, "skipped": skipped})
+    return ImportResult(imported=imported, skipped=skipped, errors=errors)
+
+
+@router.get("/lead-times/export")
+def export_lead_times(db: Session = Depends(get_db)):
+    return _export(db, """
+        SELECT product_family, inbound_days, qa_days, packing_days,
+               transport_days, buffer_days FROM lead_time_master ORDER BY product_family
+    """)
+
+
+# ---- Plant calendar ----
+@router.post("/calendar", response_model=ImportResult)
+def import_calendar(body: CsvPayload, actor: models.AppUser = Depends(require_role("planner")),
+                    db: Session = Depends(get_db)):
+    imported = skipped = 0
+    errors: list[str] = []
+    plants = {p.plant_code: p.id for p in db.query(models.Plant).all()}
+    for i, row in enumerate(_rows(body.csv), 1):
+        code = (row.get("plant_code") or "").strip()
+        shift = (row.get("shift_name") or "").strip()
+        if code not in plants:
+            errors.append(f"row {i}: unknown plant_code '{code}'")
+            continue
+        if not shift:
+            errors.append(f"row {i}: missing shift_name")
+            continue
+        try:
+            db.add(models.PlantCalendar(
+                plant_id=plants[code], shift_name=shift,
+                start_time=row.get("start_time") or "08:00",
+                end_time=row.get("end_time") or "16:00",
+                available_min=int(float(row.get("available_min") or 480)),
+                days_active=(row.get("days_active") or "Mon-Sat").strip(),
+                is_holiday=(row.get("is_holiday") or "").strip().lower() in ("1", "true", "yes"),
+                holiday_date=(row.get("holiday_date") or None) or None))
+            imported += 1
+        except (ValueError, TypeError):
+            errors.append(f"row {i}: bad time/number/date value")
+    db.commit()
+    audit(db, actor, "import", "plant_calendar", None, {"imported": imported, "skipped": skipped})
+    return ImportResult(imported=imported, skipped=skipped, errors=errors)
+
+
+@router.get("/calendar/export")
+def export_calendar(db: Session = Depends(get_db)):
+    return _export(db, """
+        SELECT p.plant_code, c.shift_name, c.start_time, c.end_time,
+               c.available_min, c.days_active, c.is_holiday, c.holiday_date
+        FROM plant_calendar c JOIN plant p ON p.id = c.plant_id
+        ORDER BY p.plant_code, c.shift_name
+    """)
+
+
+# ---- Routing & operations (one CSV: route_id + operation columns) ----
+@router.post("/routings", response_model=ImportResult)
+def import_routings(body: CsvPayload, actor: models.AppUser = Depends(require_role("planner")),
+                    db: Session = Depends(get_db)):
+    imported = skipped = 0
+    errors: list[str] = []
+    routings = {r.route_id: r.id for r in db.query(models.Routing).all()}
+    for i, row in enumerate(_rows(body.csv), 1):
+        rid = (row.get("route_id") or "").strip()
+        if not rid:
+            errors.append(f"row {i}: missing route_id")
+            continue
+        # create the routing header if new
+        if rid not in routings:
+            r = models.Routing(route_id=rid, description=(row.get("description") or "").strip())
+            db.add(r)
+            db.flush()
+            routings[rid] = r.id
+        try:
+            seq = int(float(row.get("operation_seq") or 0))
+        except ValueError:
+            errors.append(f"row {i}: operation_seq must be a number")
+            continue
+        wc = (row.get("work_center") or "").strip()
+        if not wc or not seq:
+            errors.append(f"row {i}: missing work_center or operation_seq")
+            continue
+        # skip if this routing already has this seq
+        dup = db.query(models.RoutingOperation).filter_by(
+            routing_id=routings[rid], operation_seq=seq).first()
+        if dup:
+            skipped += 1
+            continue
+        try:
+            db.add(models.RoutingOperation(
+                routing_id=routings[rid], operation_seq=seq, work_center=wc,
+                setup_min=float(row.get("setup_min") or 0),
+                run_per_unit_min=float(row.get("run_per_unit_min") or 0),
+                queue_min=float(row.get("queue_min") or 0),
+                move_min=float(row.get("move_min") or 0),
+                predecessor_seq=int(float(row["predecessor_seq"])) if row.get("predecessor_seq") else None,
+                parallel_group=(row.get("parallel_group") or None) or None))
+            imported += 1
+        except ValueError:
+            errors.append(f"row {i}: numeric fields must be numbers")
+    db.commit()
+    audit(db, actor, "import", "routing", None, {"imported": imported, "skipped": skipped})
+    return ImportResult(imported=imported, skipped=skipped, errors=errors)
+
+
+@router.get("/routings/export")
+def export_routings(db: Session = Depends(get_db)):
+    return _export(db, """
+        SELECT r.route_id, r.description, o.operation_seq, o.work_center,
+               o.setup_min, o.run_per_unit_min, o.queue_min, o.move_min,
+               o.predecessor_seq, o.parallel_group
+        FROM routing r JOIN routing_operation o ON o.routing_id = r.id
+        ORDER BY r.route_id, o.operation_seq
+    """)
