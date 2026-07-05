@@ -41,6 +41,18 @@ export function downloadRawCSV(filename: string, csv: string) {
 
 // Import templates (header + one example row), matching the importer's expected
 // columns.
+export const MASTER_TEMPLATES = {
+  calendar:
+    "plant_code,shift_name,start_time,end_time,available_min,days_active,is_holiday,holiday_date\n" +
+    "PLANT-1,Day shift,08:00,16:00,480,Mon-Sat,false,\n",
+  lead_times:
+    "product_family,inbound_days,qa_days,packing_days,transport_days,buffer_days\n" +
+    "Mechanical,5,1,1,2,1\n",
+  routings:
+    "route_id,description,operation_seq,work_center,setup_min,run_per_unit_min,queue_min,move_min,predecessor_seq,parallel_group\n" +
+    "R-NEW-01,New routing,10,Machining,60,1.2,30,15,,\n",
+} as const;
+
 export const IMPORT_TEMPLATES = {
   orders:
     "order_id,product_id,customer,order_qty,order_date,committed_delivery_date,priority,plant\n" +
