@@ -7,7 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow,
-  DashboardKpis, CapacityHeatmap, OrderDetail, CapacityCell,
+  DashboardKpis, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
 } from "./types";
 
 // In dev, Vite proxies /api -> backend. In prod, set VITE_API_BASE.
@@ -102,6 +102,17 @@ export const api = {
   orderDetail: (orderId: string) => request<OrderDetail>(`/dashboard/order-detail/${orderId}`),
   capacityCell: (workCenter: string, loadDate: string) =>
     request<CapacityCell>(`/dashboard/capacity-cell?work_center=${encodeURIComponent(workCenter)}&load_date=${loadDate}`),
+  // data model browser
+  dataTables: () => request<Array<{ table: string; description: string; row_count: number | null }>>("/datamodel/tables"),
+  tableRows: (table: string) => request<{ table: string; columns: string[]; rows: Array<Record<string, unknown>>; total: number }>(`/datamodel/rows/${table}`),
+  // master-data export
+  exportLeadTimes: () => request<Array<Record<string, unknown>>>("/import/lead-times/export"),
+  exportCalendar: () => request<Array<Record<string, unknown>>>("/import/calendar/export"),
+  exportRoutings: () => request<Array<Record<string, unknown>>>("/import/routings/export"),
+  // master-data import
+  importLeadTimes: (csv: string) => request<ImportResultT>("/import/lead-times", { method: "POST", body: JSON.stringify({ csv }) }),
+  importCalendar: (csv: string) => request<ImportResultT>("/import/calendar", { method: "POST", body: JSON.stringify({ csv }) }),
+  importRoutings: (csv: string) => request<ImportResultT>("/import/routings", { method: "POST", body: JSON.stringify({ csv }) }),
 
   // products
   listProducts: () => request<Product[]>("/products"),
