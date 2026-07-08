@@ -1,3 +1,4 @@
+
 """Scheduling endpoints: kick off an async CP-SAT solve, poll its status,
 and read the resulting schedule.
 """
@@ -105,6 +106,20 @@ def recover(order_id: str, body: RecoverRequest,
     if result.get("feasible"):
         publish("schedule_updated", {"order_id": order_id, "recovery": True})
     return result
+
+
+@router.post("/orders/{order_id}/recommend")
+def recommend(order_id: str, time_budget_s: int = 8,
+             _: models.AppUser = Depends(require_role("planner")),
+             db: Session = Depends(get_db)):
+    """Read-only: try a small set of overtime levels and suggest the smallest
+    one that clears this order's lateness (or the best achievable). Nothing is
+    persisted — this is a preview to inform a planner's recovery decision."""
+    from ..engine.recovery import recommend_recovery
+    try:
+        return recommend_recovery(db, order_id, time_budget_s=min(time_budget_s, 20))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.get("/orders/{order_id}/reschedule-log")
