@@ -151,6 +151,8 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
   const [orderId, setOrderId] = useState("");
   const [overtime, setOvertime] = useState(false);
   const [overtimeHrs, setOvertimeHrs] = useState(4);
+  const [overtimeFrom, setOvertimeFrom] = useState("");
+  const [overtimeTo, setOvertimeTo] = useState("");
   const [partial, setPartial] = useState(false);
   const [partialQty, setPartialQty] = useState<number | "">("");
   const [mode, setMode] = useState("forward");
@@ -172,6 +174,8 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
     try {
       const res = await api.recoverOrder(orderId, {
         overtime, overtime_hrs: overtimeHrs,
+        overtime_from: overtime ? (overtimeFrom || null) : null,
+        overtime_to: overtime ? (overtimeTo || null) : null,
         partial_qty: partial && partialQty ? Number(partialQty) : null,
         mode, time_budget_s: 15,
       });
@@ -222,9 +226,19 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
               Add overtime
             </label>
             {overtime && (
-              <div style={{ width: 160 }}>
-                <label>Extra hours / day</label>
-                <input type="number" min={1} max={12} value={overtimeHrs} onChange={(e) => setOvertimeHrs(Number(e.target.value))} />
+              <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+                <div style={{ width: 160 }}>
+                  <label>Extra hours / day</label>
+                  <input type="number" min={1} max={12} value={overtimeHrs} onChange={(e) => setOvertimeHrs(Number(e.target.value))} />
+                </div>
+                <div style={{ width: 150 }}>
+                  <label>From date</label>
+                  <input type="date" value={overtimeFrom} onChange={(e) => setOvertimeFrom(e.target.value)} />
+                </div>
+                <div style={{ width: 150 }}>
+                  <label>To date</label>
+                  <input type="date" value={overtimeTo} onChange={(e) => setOvertimeTo(e.target.value)} />
+                </div>
               </div>
             )}
           </div>
