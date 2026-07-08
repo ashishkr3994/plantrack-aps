@@ -6,7 +6,7 @@ import type {
   DashboardSummary, WatchlistRow, SolveJob, SolveRequest, OrderSchedule,
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
-  AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow,
+  AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, RecommendationResult,
   DashboardKpis, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
 } from "./types";
 
@@ -200,6 +200,9 @@ export const api = {
   }) => request<RecoveryResult>(`/schedule/orders/${orderId}/recover`, { method: "POST", body: JSON.stringify(opts) }),
   rescheduleLog: (orderId: string) =>
     request<RescheduleLogRow[]>(`/schedule/orders/${orderId}/reschedule-log`),
+  delayedOrders: () => request<DelayedOrderRow[]>("/dashboard/delayed-orders"),
+  recommendRecovery: (orderId: string) =>
+    request<RecommendationResult>(`/schedule/orders/${orderId}/recommend`, { method: "POST" }),
 
   // user admin
   updateUser: (id: number, patch: { full_name?: string; role?: string; is_active?: boolean; password?: string }) =>
