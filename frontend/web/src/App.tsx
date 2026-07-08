@@ -13,6 +13,7 @@ import { Materials } from "./screens/Materials";
 import { Reschedule } from "./screens/Reschedule";
 import { Events } from "./screens/Events";
 import { DataModel } from "./screens/DataModel";
+import { DelayedOrders } from "./screens/DelayedOrders";
 import { MasterData } from "./screens/MasterData";
 import { Analytics } from "./screens/Analytics";
 import { Configuration } from "./screens/Configuration";
@@ -29,6 +30,7 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: "/capacity", label: "Capacity" },
   { to: "/materials", label: "Materials & BOM" },
   { to: "/reschedule", label: "Reschedule" },
+  { to: "/delayed", label: "Delayed & critical" },
   { to: "/events", label: "Execution events" },
   { to: "/analytics", label: "Analytics" },
   { to: "/sandbox", label: "What-if sandbox" },
@@ -239,6 +241,7 @@ export function App() {
             <Route path="/capacity" element={<Capacity />} />
             <Route path="/materials" element={<Materials />} />
             <Route path="/reschedule" element={<Reschedule />} />
+            <Route path="/delayed" element={<DelayedOrders />} />
             <Route path="/events" element={<Events />} />
             <Route path="/master-data" element={<MasterData />} />
             <Route path="/data-model" element={<DataModel />} />
