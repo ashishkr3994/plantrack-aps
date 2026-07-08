@@ -385,3 +385,30 @@ export interface ImportResultT {
   skipped: number;
   errors: string[];
 }
+
+// --- delayed/critical drill-down + recommendation ---
+export interface DelayedOrderRow {
+  order_id: string;
+  customer: string;
+  priority: string;
+  order_qty: number;
+  committed_delivery_date: string;
+  milestone_name: string;
+  severity: string;
+  root_cause_code: string | null;
+  deviation_minutes: number | null;
+  action_owner: string | null;
+  generated_at: string;
+}
+
+export interface RecommendationResult {
+  feasible: boolean;
+  order_id?: string;
+  recommended_overtime_hrs?: number;
+  projected_on_time?: boolean;
+  baseline_lateness_hrs?: number;
+  projected_lateness_hrs?: number;
+  hours_recovered?: number;
+  bottleneck_machine?: string | null;
+  message: string;
+}
