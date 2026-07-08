@@ -35,7 +35,7 @@ export function Dashboard() {
             <Kpi label="Schedule adherence" value={kpis.data.schedule_adherence_pct == null ? "—" : `${kpis.data.schedule_adherence_pct}%`} tone={pct(kpis.data.schedule_adherence_pct)} onClick={() => nav("/schedule")} />
             <Kpi label="On-time delivery" value={kpis.data.on_time_delivery_pct == null ? "—" : `${kpis.data.on_time_delivery_pct}%`} tone={pct(kpis.data.on_time_delivery_pct)} onClick={() => nav("/schedule")} />
             <Kpi label="Orders at risk" value={kpis.data.orders_at_risk} tone={kpis.data.orders_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/orders")} />
-            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} onClick={() => nav("/reschedule")} />
+            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} onClick={() => nav("/delayed")} />
             <Kpi label="Material at risk" value={kpis.data.material_at_risk} tone={kpis.data.material_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/materials")} />
             <Kpi label="Capacity conflicts" value={kpis.data.capacity_conflicts} tone={kpis.data.capacity_conflicts > 0 ? "warn" : "ok"} onClick={() => nav("/capacity")} />
             <Kpi label="Open alerts" value={kpis.data.open_alerts} tone={kpis.data.open_alerts > 0 ? "alert" : "ok"} onClick={() => nav("/alerts")} />
@@ -87,7 +87,7 @@ export function Dashboard() {
 
       {/* Three insight panels */}
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-        <DelayReasonsPanel onOpen={() => nav("/reschedule")} />
+        <DelayReasonsPanel onOpen={() => nav("/delayed")} />
         <RecoveryPipelinePanel onOpen={() => nav("/reschedule")} />
         <MaterialRiskPanel onOpen={() => nav("/materials")} />
       </div>
