@@ -74,7 +74,17 @@ def kpis(db: Session = Depends(get_db)):
     # schedule adherence = scheduled orders that are not stale
     not_stale = scalar("SELECT count(*) FROM planned_schedule WHERE is_current AND NOT is_stale")
     adherence_pct = round(100.0 * not_stale / scheduled) if scheduled else None
-    at_risk = material_at_risk + delayed
+    # orders_at_risk = distinct orders in EITHER set, not a sum (an order can be
+    # both materially late AND carry an open High/Critical deviation — that's
+    # one at-risk order, not two).
+    at_risk = scalar("""
+        SELECT count(*) FROM (
+            SELECT order_id FROM material_status WHERE status IN ('late','risk')
+            UNION
+            SELECT order_id FROM deviation_log
+            WHERE resolution_status='Open' AND severity IN ('High','Critical')
+        ) x
+    """)
 
     return {
         "orders": orders_total,
@@ -233,3 +243,20 @@ def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db
         "load": dict(load) if load else None,
         "operations": operations,
     }
+
+
+@router.get("/delayed-orders")
+def delayed_orders(db: Session = Depends(get_db)):
+    """Every order with an open High/Critical deviation — the list behind the
+    Delayed/Critical KPI drill-down. Each row carries its root cause so a
+    planner can see *why* before deciding on a recovery action."""
+    return _rows(db, """
+        SELECT o.order_id, o.customer, o.priority, o.order_qty,
+               o.committed_delivery_date,
+               d.milestone_name, d.severity, d.root_cause_code,
+               d.deviation_minutes, d.action_owner, d.generated_at
+        FROM deviation_log d
+        JOIN order_header o ON o.id = d.order_id
+        WHERE d.resolution_status = 'Open' AND d.severity IN ('High','Critical')
+        ORDER BY d.severity DESC, d.deviation_minutes DESC NULLS LAST
+    """)
