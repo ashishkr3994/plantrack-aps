@@ -60,7 +60,7 @@ class SchedulingInput:
     warm_start: dict[tuple, int] = field(default_factory=dict)
 
 
-def load_scheduling_input(db: Session, minutes_per_day: int = 960,
+def load_scheduling_input(db: Session, minutes_per_day: int = 600,
                           default_wc_capacity: int = 1,
                           wc_capacity_overrides: dict[str, int] | None = None,
                           order_ids: list[str] | None = None) -> SchedulingInput:
