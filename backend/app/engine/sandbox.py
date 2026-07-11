@@ -52,7 +52,7 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     baseline = cpsat_solve(si_base, max_seconds=req.time_budget_s)
 
     # ---- scenario: reload fresh, apply overrides + levers ----
-    minutes_per_day = 960 + max(0, int(req.overtime_hrs_per_day)) * 60
+    minutes_per_day = 600 + max(0, int(req.overtime_hrs_per_day)) * 60
     si = load_scheduling_input(db, minutes_per_day=minutes_per_day)
     cal = si.calendar
     by_id = {o.order_id: o for o in si.orders}
