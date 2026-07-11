@@ -168,6 +168,7 @@ export const api = {
   changePassword: (current_password: string, new_password: string) =>
     request<void>("/auth/change-password", { method: "POST", body: JSON.stringify({ current_password, new_password }) }),
   listUsers: () => request<AuthUser[]>("/auth/users"),
+  resetDemoData: () => request<{ status: string; scripts_applied: string[]; material_counts: Record<string, number>; note: string }>("/admin/reset-demo-data", { method: "POST" }),
   createUser: (u: { username: string; password: string; full_name?: string; role: string }) =>
     request<AuthUser>("/auth/users", { method: "POST", body: JSON.stringify(u) }),
   auditTrail: (limit = 100) => request<AuditEntry[]>(`/audit?limit=${limit}`),
