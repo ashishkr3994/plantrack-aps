@@ -8,6 +8,7 @@ export function Admin() {
     <div className="stack">
       <h2>Administration</h2>
       <Users />
+      <DemoData />
       <AuditTrail />
     </div>
   );
@@ -123,6 +124,61 @@ function CreateUserModal({
         </select>
       </div>
     </Modal>
+  );
+}
+
+
+function DemoData() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const run = async () => {
+    setConfirming(false);
+    setError(null);
+    setResult(null);
+    setBusy(true);
+    try {
+      const r = await api.resetDemoData();
+      setResult(r.note || "Demo data loaded.");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Reset failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <div className="hd">Demo data</div>
+      <div className="bd stack">
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          Reset the database to the curated 10-order demo dataset. This <strong>wipes all
+          current orders and master data</strong> (products, routings, calendar) and reloads
+          the demo shop. User logins are preserved. Safe to run repeatedly.
+        </p>
+        <div>
+          <button className="danger" onClick={() => setConfirming(true)} disabled={busy}>
+            {busy ? "Resetting…" : "Reset to demo data"}
+          </button>
+        </div>
+        {result && (
+          <div className="banner ok">
+            {result}
+          </div>
+        )}
+        {error && <div className="banner err">{error}</div>}
+      </div>
+      {confirming && (
+        <Modal title="Reset to demo data?" onClose={() => setConfirming(false)}
+          footer={<><button className="ghost" onClick={() => setConfirming(false)}>Cancel</button>
+            <button className="danger" onClick={run}>Yes, wipe and load demo</button></>}>
+          <p>This permanently deletes all current orders and master data, then loads the
+             10-order demo set. Your users and logins are kept. Continue?</p>
+        </Modal>
+      )}
+    </section>
   );
 }
 
