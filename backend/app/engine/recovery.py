@@ -59,7 +59,7 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
     # in the flat working-minute model without calendar surgery, so we apply the
     # uplift globally for this targeted solve and record the requested window in
     # the log (transparent about the approximation — see ADR).
-    minutes_per_day = 960
+    minutes_per_day = 600
     if opts.overtime:
         minutes_per_day += max(0, int(opts.overtime_hrs)) * 60
 
