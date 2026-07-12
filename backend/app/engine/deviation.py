@@ -149,12 +149,14 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     forecast_end = datetime.fromtimestamp(planned_end.timestamp() + slip_mins * 60, tz=timezone.utc)
     slip_hrs = max(0, round((forecast_end - planned_end).total_seconds() / 3600, 1))
 
-    # 6b. schedule lateness: the plan itself may already deliver past the
-    # committed date (independent of any shop-floor event). Treat that as a
-    # real slip so genuinely-late orders are classified for the right reason.
+    # 6b. schedule lateness: does the plan DELIVER past the committed date?
+    # The solver now targets production finishing early enough that delivery
+    # (prod_end + fixed pack/dispatch/transport lead) lands by the committed
+    # date, so comparing delivery vs committed is consistent with the solver's
+    # own on-time basis. An order only counts late here if delivery itself
+    # slips past the committed day.
     sched_late_hrs = 0.0
     if sched.planned_delivery_dt is not None:
-        # commitment honoured if delivered by end of the committed day
         committed_eod = _aware(datetime(
             order.committed_delivery_date.year,
             order.committed_delivery_date.month,
@@ -162,7 +164,7 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
         plan_delivery = _aware(sched.planned_delivery_dt)
         if plan_delivery > committed_eod:
             sched_late_hrs = round((plan_delivery - committed_eod).total_seconds() / 3600, 1)
-            reasons.append(Reason("time", f"Plan delivers {sched_late_hrs}h past committed"))
+            reasons.append(Reason("time", f"Delivery {sched_late_hrs}h past committed"))
     # the effective slip is the larger of event-driven and plan-driven lateness
     slip_hrs = max(slip_hrs, sched_late_hrs)
 
@@ -197,8 +199,13 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
         status = "crit"
     elif slip_hrs > thresholds["delay_slip_hrs"]:
         status = "delay"
-    elif (slip_hrs > thresholds["risk_slip_hrs"] or buffer_health < buf_crit
+    elif (slip_hrs > thresholds["risk_slip_hrs"]
           or (ms and ms.status in ("late", "risk"))):
+        # NOTE: buffer erosion alone no longer triggers 'risk'. Just-in-time /
+        # load-levelled plans legitimately finish close to the due date (thin
+        # buffer) without being late, so buffer_health < buf_crit is kept only
+        # as a contributing reason chip (added above) rather than a standalone
+        # trigger. An order is at risk only for real slip or material issues.
         status = "risk"
 
     return OrderStatus(
