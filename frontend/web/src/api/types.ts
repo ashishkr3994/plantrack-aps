@@ -164,6 +164,7 @@ export interface SolveRequest {
   mode?: SchedMode;
   time_budget_s?: number;
   order_ids?: string[] | null;
+  leveling?: "off" | "soft" | "strict";
 }
 
 export interface OrderSchedule {
