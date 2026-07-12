@@ -5,13 +5,13 @@ import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, Modal } from "@/components/ui";
 
 function fmtDate(s: unknown): string {
-  if (!s || typeof s !== "string") return "—";
+  if (!s || typeof s !== "string") return "-";
   const d = new Date(s);
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 function fmtDT(s: unknown): string {
-  if (!s || typeof s !== "string") return "—";
+  if (!s || typeof s !== "string") return "-";
   const d = new Date(s);
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
@@ -23,32 +23,61 @@ export function Dashboard() {
   const kpis = useQuery({ queryKey: ["kpis"], queryFn: api.kpis });
   const watch = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlist });
   const [drillOrder, setDrillOrder] = useState<string | null>(null);
+  const [drillKey, setDrillKey] = useState<string | null>(null);
+
+  // adherence/OTD color: green >=90, amber >=80, red below (prototype thresholds)
+  const pctTone = (v: number | null) => v == null ? undefined : v >= 90 ? "ok" : v >= 80 ? "warn" : "alert";
 
   return (
     <div className="stack">
-      {/* KPI strip */}
+      {/* KPI strip - six prototype KPIs, each opens a drill-down of the orders behind it */}
       <section className="grid kpis">
-        {kpis.isLoading && <Loading label="Loading metrics…" />}
+        {kpis.isLoading && <Loading label="Loading metrics..." />}
         {kpis.isError && <ErrorState message="Couldn't load metrics." onRetry={() => kpis.refetch()} />}
         {kpis.data && (
           <>
-            <Kpi label="Schedule adherence" value={kpis.data.schedule_adherence_pct == null ? "—" : `${kpis.data.schedule_adherence_pct}%`} tone={pct(kpis.data.schedule_adherence_pct)} onClick={() => nav("/schedule")} />
-            <Kpi label="On-time delivery" value={kpis.data.on_time_delivery_pct == null ? "—" : `${kpis.data.on_time_delivery_pct}%`} tone={pct(kpis.data.on_time_delivery_pct)} onClick={() => nav("/schedule")} />
-            <Kpi label="Orders at risk" value={kpis.data.orders_at_risk} tone={kpis.data.orders_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/orders")} />
-            <Kpi label="Delayed / critical" value={kpis.data.delayed_critical} tone={kpis.data.delayed_critical > 0 ? "alert" : "ok"} onClick={() => nav("/delayed")} />
-            <Kpi label="Material at risk" value={kpis.data.material_at_risk} tone={kpis.data.material_at_risk > 0 ? "warn" : "ok"} onClick={() => nav("/materials")} />
-            <Kpi label="Capacity conflicts" value={kpis.data.capacity_conflicts} tone={kpis.data.capacity_conflicts > 0 ? "warn" : "ok"} onClick={() => nav("/capacity")} />
-            <Kpi label="Open alerts" value={kpis.data.open_alerts} tone={kpis.data.open_alerts > 0 ? "alert" : "ok"} onClick={() => nav("/alerts")} />
-            <Kpi label="Active orders" value={kpis.data.orders} onClick={() => nav("/orders")} />
+            <KpiCard label="Schedule adherence"
+              value={kpis.data.schedule_adherence_pct == null ? "-" : `${kpis.data.schedule_adherence_pct}%`}
+              sub="vs 95% target" tone={pctTone(kpis.data.schedule_adherence_pct)}
+              onClick={() => setDrillKey("adherence")} />
+            <KpiCard label="On-time delivery"
+              value={kpis.data.on_time_delivery_pct == null ? "-" : `${kpis.data.on_time_delivery_pct}%`}
+              sub="customer promise" tone={pctTone(kpis.data.on_time_delivery_pct)}
+              onClick={() => setDrillKey("otd")} />
+            <KpiCard label="Orders at risk" value={kpis.data.orders_at_risk}
+              sub={`of ${kpis.data.orders} active`}
+              tone={kpis.data.orders_at_risk > 5 ? "alert" : kpis.data.orders_at_risk > 2 ? "warn" : "ok"}
+              onClick={() => setDrillKey("risk")} />
+            <KpiCard label="Delayed / critical" value={kpis.data.delayed_critical}
+              sub="need recovery"
+              tone={kpis.data.delayed_critical > 3 ? "alert" : kpis.data.delayed_critical > 1 ? "warn" : "ok"}
+              onClick={() => setDrillKey("delayed")} />
+            <KpiCard label="Material at risk" value={kpis.data.material_at_risk}
+              sub="orders affected"
+              tone={kpis.data.material_at_risk > 2 ? "alert" : kpis.data.material_at_risk > 0 ? "warn" : "ok"}
+              onClick={() => setDrillKey("material")} />
+            <KpiCard label="Capacity conflicts" value={kpis.data.capacity_conflicts}
+              sub="overloaded WC-days"
+              tone={kpis.data.capacity_conflicts > 3 ? "alert" : kpis.data.capacity_conflicts > 0 ? "warn" : "ok"}
+              onClick={() => setDrillKey("capacity")} />
           </>
         )}
       </section>
+
+      {drillKey && (
+        <KpiDrillModal
+          drillKey={drillKey}
+          onClose={() => setDrillKey(null)}
+          onOpenOrder={(oid) => { setDrillKey(null); setDrillOrder(oid); }}
+        />
+      )}
+
 
       {/* Order watchlist with deep drill-down */}
       <section className="card">
         <div className="hd">
           Order watchlist
-          {watch.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing…</span>}
+          {watch.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing...</span>}
         </div>
         <div className="bd" style={{ padding: 0 }}>
           {watch.isLoading && <Loading />}
@@ -75,7 +104,7 @@ export function Dashboard() {
                     <td>{fmtDate(r.committed_delivery_date)}</td>
                     <td>{fmtDate(r.planned_delivery_dt)}</td>
                     <td><BufferBar hrs={r.buffer_hrs} /></td>
-                    <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "—"}</td>
+                    <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
                     <td>{r.schedule_status ? <Pill tone={statusTone(r.schedule_status)}>{r.schedule_status}</Pill> : <span className="muted">not scheduled</span>}</td>
                   </tr>
                 ))}
@@ -97,15 +126,9 @@ export function Dashboard() {
   );
 }
 
-function pct(v: number | null): "ok" | "warn" | "alert" | undefined {
-  if (v == null) return undefined;
-  if (v >= 90) return "ok";
-  if (v >= 70) return "warn";
-  return "alert";
-}
 
 function BufferBar({ hrs }: { hrs: unknown }) {
-  if (hrs == null || typeof hrs !== "number") return <span className="muted">—</span>;
+  if (hrs == null || typeof hrs !== "number") return <span className="muted">-</span>;
   const pctVal = Math.max(0, Math.min(100, (hrs / 72) * 100));
   const color = hrs < 12 ? "var(--risk)" : hrs < 36 ? "var(--warn)" : "var(--ok)";
   return (
@@ -124,15 +147,15 @@ function DelayReasonsPanel({ onOpen }: { onOpen: () => void }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <section className="card">
-      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Delay reasons →</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Delay reasons &rarr;</div>
       <div className="bd">
         {q.isLoading && <Loading />}
-        {!q.isLoading && rows.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No open deviations — nothing delayed.</div>}
+        {!q.isLoading && rows.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No open deviations - nothing delayed.</div>}
         {rows.map((r) => (
           <div key={r.root_cause} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
               <span>{r.root_cause}</span>
-              <span className="muted">{r.count} · {r.total_hours}h</span>
+              <span className="muted">{r.count} - {r.total_hours}h</span>
             </div>
             <div className="buffer-track"><div className="buffer-fill" style={{ width: `${(r.count / max) * 100}%`, background: "var(--warn)" }} /></div>
           </div>
@@ -147,7 +170,7 @@ function RecoveryPipelinePanel({ onOpen }: { onOpen: () => void }) {
   const rows = q.data ?? [];
   return (
     <section className="card">
-      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Recovery pipeline →</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Recovery pipeline &rarr;</div>
       <div className="bd" style={{ padding: 0 }}>
         {q.isLoading && <Loading />}
         {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No recoveries yet.</div>}
@@ -159,7 +182,7 @@ function RecoveryPipelinePanel({ onOpen }: { onOpen: () => void }) {
                 <tr key={i}>
                   <td className="mono">{String(r.order_id)}</td>
                   <td className="num">{String(r.version)}</td>
-                  <td>{String(r.performed_by ?? "—")}</td>
+                  <td>{String(r.performed_by ?? "-")}</td>
                   <td>{fmtDate(r.new_delivery)}</td>
                 </tr>
               ))}
@@ -176,7 +199,7 @@ function MaterialRiskPanel({ onOpen }: { onOpen: () => void }) {
   const rows = (q.data ?? []).filter((m) => m.status === "risk" || m.status === "late");
   return (
     <section className="card">
-      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open materials">Material risk →</div>
+      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open materials">Material risk &rarr;</div>
       <div className="bd" style={{ padding: 0 }}>
         {q.isLoading && <Loading />}
         {!q.isLoading && rows.length === 0 && <div className="state" style={{ padding: 24 }}>No material risks.</div>}
@@ -188,7 +211,7 @@ function MaterialRiskPanel({ onOpen }: { onOpen: () => void }) {
                 <tr key={m.order_id}>
                   <td className="mono">{m.order_id}</td>
                   <td><Pill tone={statusTone(m.status)}>{m.status}</Pill></td>
-                  <td className="muted" style={{ fontSize: 12 }}>{m.risk_reason ?? "—"}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{m.risk_reason ?? "-"}</td>
                 </tr>
               ))}
             </tbody>
@@ -204,7 +227,7 @@ function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => 
   const d = q.data;
   return (
     <Modal title={`Order ${orderId}`} onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
-      {q.isLoading && <Loading label="Loading order detail…" />}
+      {q.isLoading && <Loading label="Loading order detail..." />}
       {d && (
         <div className="stack" style={{ maxHeight: "70vh", overflowY: "auto" }}>
           {/* Order & status */}
@@ -231,7 +254,7 @@ function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => 
                 ["Delivery", fmtDT(d.schedule.planned_delivery_dt)],
                 ["Buffer (hrs)", str(d.schedule.buffer_hrs)],
               ]} />
-            ) : <Empty text="Not scheduled yet — run the optimiser." />}
+            ) : <Empty text="Not scheduled yet - run the optimiser." />}
           </Section>
 
           {/* Risk signals */}
@@ -242,7 +265,7 @@ function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => 
                   <tr key={i}>
                     <td>{str(r.milestone_name)}</td>
                     <td><Pill tone={statusTone(str(r.severity))}>{str(r.severity)}</Pill></td>
-                    <td className="muted">{str(r.root_cause_code) || "—"}</td>
+                    <td className="muted">{str(r.root_cause_code) || "-"}</td>
                     <td>{str(r.resolution_status)}</td>
                   </tr>
                 ))}</tbody></table>
@@ -270,7 +293,7 @@ function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => 
             {d.material && (
               <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
                 Material status: <Pill tone={statusTone(str(d.material.status))}>{str(d.material.status)}</Pill>
-                {d.material.risk_reason ? ` — ${str(d.material.risk_reason)}` : ""}
+                {d.material.risk_reason ? ` - ${str(d.material.risk_reason)}` : ""}
               </p>
             )}
             {d.bom.length === 0 ? <Empty text="No bill of materials." /> : (
@@ -292,9 +315,9 @@ function OrderDrillDown({ orderId, onClose }: { orderId: string; onClose: () => 
                   <tr key={i}>
                     <td><Pill tone="info">{str(e.event_type)}</Pill></td>
                     <td>{fmtDT(e.event_timestamp)}</td>
-                    <td className="num">{str(e.operation_seq) || "—"}</td>
-                    <td className="num">{str(e.event_qty) || "—"}</td>
-                    <td className="muted">{str(e.entered_by) || "—"}</td>
+                    <td className="num">{str(e.operation_seq) || "-"}</td>
+                    <td className="num">{str(e.event_qty) || "-"}</td>
+                    <td className="muted">{str(e.entered_by) || "-"}</td>
                   </tr>
                 ))}</tbody></table>
             )}
@@ -321,7 +344,7 @@ function KV({ pairs }: { pairs: Array<[string, string]> }) {
   return (
     <table><tbody>
       {pairs.map(([k, v]) => (
-        <tr key={k}><td className="muted" style={{ width: "45%" }}>{k}</td><td>{v || "—"}</td></tr>
+        <tr key={k}><td className="muted" style={{ width: "45%" }}>{k}</td><td>{v || "-"}</td></tr>
       ))}
     </tbody></table>
   );
@@ -330,13 +353,91 @@ function Empty({ text }: { text: string }) {
   return <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>{text}</p>;
 }
 
-function Kpi({ label, value, tone, onClick }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "alert"; onClick?: () => void }) {
+function KpiCard({ label, value, sub, tone, onClick }: {
+  label: string; value: React.ReactNode; sub?: string;
+  tone?: "ok" | "warn" | "alert"; onClick?: () => void;
+}) {
   return (
     <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}
          onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}
-         title={onClick ? "Click to open the related page" : undefined}>
+         title={onClick ? "Click for the orders behind this metric" : undefined}>
       <div className="v">{value}</div>
       <div className="l">{label}</div>
+      {sub && <div className="l" style={{ opacity: 0.6, fontSize: 11 }}>{sub}</div>}
     </div>
+  );
+}
+
+function ReasonChip({ type, text }: { type: string; text: string }) {
+  // color by reason type, mirroring the prototype's risk-reason chips
+  const bg: Record<string, string> = {
+    time: "var(--risk-bg, #fde8e8)", buffer: "#efe7fb",
+    material: "rgba(245,158,11,0.18)", capacity: "#e6efff",
+  };
+  const fg: Record<string, string> = {
+    time: "var(--risk, #c0392b)", buffer: "#7c3aed",
+    material: "#b45309", capacity: "#2563eb",
+  };
+  return (
+    <span style={{
+      display: "inline-block", fontSize: 11, padding: "1px 7px", borderRadius: 8,
+      margin: "1px 2px", background: bg[type] || "#eee", color: fg[type] || "#333",
+    }}>{text}</span>
+  );
+}
+
+function KpiDrillModal({ drillKey, onClose, onOpenOrder }: {
+  drillKey: string; onClose: () => void; onOpenOrder: (oid: string) => void;
+}) {
+  const q = useQuery({ queryKey: ["kpi-drill", drillKey], queryFn: () => api.kpiDrilldown(drillKey) });
+  const isCapacity = drillKey === "capacity";
+  return (
+    <Modal title={q.data?.title || "Loading..."} onClose={onClose}>
+      {q.data?.subtitle && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{q.data.subtitle}</div>}
+      {q.isLoading && <Loading />}
+      {q.isError && <ErrorState message="Couldn't load details." onRetry={() => q.refetch()} />}
+      {q.data && q.data.rows.length === 0 && <div className="state">No orders in this category. </div>}
+      {q.data && q.data.rows.length > 0 && !isCapacity && (
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table>
+            <thead><tr>
+              <th>Order</th><th>Customer</th><th>Priority</th><th>Slip</th><th>Reasons</th>
+            </tr></thead>
+            <tbody>
+              {q.data.rows.map((r) => (
+                <tr key={r.order_id} style={{ cursor: "pointer" }}
+                    onClick={() => r.order_id && onOpenOrder(r.order_id)}>
+                  <td style={{ fontWeight: 600 }}>{r.order_id}</td>
+                  <td>{r.customer || "-"}</td>
+                  <td>{r.priority || "-"}</td>
+                  <td>{r.slip_hrs && r.slip_hrs > 0
+                    ? <span style={{ color: "var(--risk, #c0392b)" }}>+{r.slip_hrs}h</span> : "-"}</td>
+                  <td>{r.reasons && r.reasons.length > 0
+                    ? r.reasons.map((x, i) => <ReasonChip key={i} type={x.type} text={x.text} />)
+                    : "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {q.data && q.data.rows.length > 0 && isCapacity && (
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table>
+            <thead><tr><th>Work centre</th><th>Date</th><th>Demand (min)</th><th>Available (min)</th></tr></thead>
+            <tbody>
+              {q.data.rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ fontWeight: 600 }}>{r.work_center}</td>
+                  <td>{fmtDate(r.load_date)}</td>
+                  <td style={{ color: "var(--risk, #c0392b)" }}>{r.demand_min != null ? Math.round(Number(r.demand_min)) : "-"}</td>
+                  <td>{r.available_min ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
   );
 }
