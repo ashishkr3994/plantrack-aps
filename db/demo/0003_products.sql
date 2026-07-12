@@ -1,6 +1,6 @@
 -- =====================================================================
 -- DEMO PRODUCTS — realistic to a plasma-cutting / welding / CNC / powder-
--- coating fabrication shop. Structural-steel family uses R-FAB-STD;
+-- coating fabrication shop. Structural-steel family uses R-FAB-STD
 -- pressure-vessel family uses R-FAB-PV (heavier NDT, longer weld
 -- =====================================================================
 BEGIN;
