@@ -1,4 +1,4 @@
-"""Deviation & alert engine — server-side port of the prototype's
+"""Deviation & alert engine - server-side port of the prototype's
 computeOrderStatus + generateAlerts.
 
 Compares actual execution (hand-logged events) against the current baseline
@@ -149,6 +149,23 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     forecast_end = datetime.fromtimestamp(planned_end.timestamp() + slip_mins * 60, tz=timezone.utc)
     slip_hrs = max(0, round((forecast_end - planned_end).total_seconds() / 3600, 1))
 
+    # 6b. schedule lateness: the plan itself may already deliver past the
+    # committed date (independent of any shop-floor event). Treat that as a
+    # real slip so genuinely-late orders are classified for the right reason.
+    sched_late_hrs = 0.0
+    if sched.planned_delivery_dt is not None:
+        # commitment honoured if delivered by end of the committed day
+        committed_eod = _aware(datetime(
+            order.committed_delivery_date.year,
+            order.committed_delivery_date.month,
+            order.committed_delivery_date.day, 23, 59))
+        plan_delivery = _aware(sched.planned_delivery_dt)
+        if plan_delivery > committed_eod:
+            sched_late_hrs = round((plan_delivery - committed_eod).total_seconds() / 3600, 1)
+            reasons.append(Reason("time", f"Plan delivers {sched_late_hrs}h past committed"))
+    # the effective slip is the larger of event-driven and plan-driven lateness
+    slip_hrs = max(slip_hrs, sched_late_hrs)
+
     # 7. buffer erosion
     orig_buffer = float(sched.original_buffer_hrs or sched.buffer_hrs or 0)
     remaining_buffer = orig_buffer - slip_hrs
@@ -170,7 +187,10 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
 
     # classify
     status = "on"
-    delivery_breach = remaining_buffer < 0
+    # a real delivery breach = plan delivers past the END of the committed day
+    # (consistent with sched_late_hrs; avoids flagging same-day deliveries that
+    # merely land after midnight as "late").
+    delivery_breach = sched_late_hrs > 0
     if has_completed:
         status, slip_hrs = "on", 0
     elif slip_hrs > thresholds["crit_slip_hrs"] or delivery_breach:
@@ -178,7 +198,7 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     elif slip_hrs > thresholds["delay_slip_hrs"]:
         status = "delay"
     elif (slip_hrs > thresholds["risk_slip_hrs"] or buffer_health < buf_crit
-          or hits_overload or (ms and ms.status in ("late", "risk"))):
+          or (ms and ms.status in ("late", "risk"))):
         status = "risk"
 
     return OrderStatus(
@@ -247,29 +267,29 @@ def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
         # alerts (role-targeted)
         if ms and ms.status == "late":
             push_alert("warn", order.id, f"mat-late-{order.order_id}",
-                       f"Material late {ms.slip_days}d — {pname}",
-                       "Owner: Procurement lead · cascaded into production")
+                       f"Material late {ms.slip_days}d - {pname}",
+                       "Owner: Procurement lead - cascaded into production")
         elif ms and ms.status == "risk":
             push_alert("warn", order.id, f"mat-risk-{order.order_id}",
-                       f"Material at risk — {pname}",
-                       f"{ms.risk_reason or 'Approaching ready date'} · Owner: Procurement lead")
+                       f"Material at risk - {pname}",
+                       f"{ms.risk_reason or 'Approaching ready date'} - Owner: Procurement lead")
 
         for r in comp.reasons:
             if r.kind == "time" and "Silent" in r.text:
                 push_alert("crit", order.id, f"silent-{order.order_id}",
-                           f"Silent start miss — {pname}", f"{r.text} · Owner: Production supervisor")
+                           f"Silent start miss - {pname}", f"{r.text} - Owner: Production supervisor")
             elif r.kind == "buffer":
                 push_alert("warn", order.id, f"buffer-{order.order_id}",
-                           f"Buffer erosion — {pname}", f"{r.text} · Owner: Planner")
+                           f"Buffer erosion - {pname}", f"{r.text} - Owner: Planner")
             elif r.kind == "capacity":
                 push_alert("warn", order.id, f"cap-{order.order_id}",
-                           f"Capacity overload — {pname}",
-                           "A work center for this order is overloaded · Owner: Planner")
+                           f"Capacity overload - {pname}",
+                           "A work center for this order is overloaded - Owner: Planner")
 
         if comp.status == "crit":
             push_alert("crit", order.id, f"breach-{order.order_id}",
-                       f"Delivery promise at risk — {pname}",
-                       f"Forecast +{comp.slip_hrs}h · buffer {comp.buffer_health}% · Owner: Supervisor + Sales")
+                       f"Delivery promise at risk - {pname}",
+                       f"Forecast +{comp.slip_hrs}h - buffer {comp.buffer_health}% - Owner: Supervisor + Sales")
 
     db.commit()
     if alerts_made:
