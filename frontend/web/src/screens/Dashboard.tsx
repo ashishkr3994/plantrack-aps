@@ -59,7 +59,7 @@ export function Dashboard() {
             <KpiCard label="Capacity conflicts" value={kpis.data.capacity_conflicts}
               sub="overloaded WC-days"
               tone={kpis.data.capacity_conflicts > 3 ? "alert" : kpis.data.capacity_conflicts > 0 ? "warn" : "ok"}
-              onClick={() => setDrillKey("capacity")} />
+              onClick={() => nav("/capacity")} />
           </>
         )}
       </section>
@@ -392,7 +392,7 @@ function KpiDrillModal({ drillKey, onClose, onOpenOrder }: {
   const q = useQuery({ queryKey: ["kpi-drill", drillKey], queryFn: () => api.kpiDrilldown(drillKey) });
   const isCapacity = drillKey === "capacity";
   return (
-    <Modal title={q.data?.title || "Loading..."} onClose={onClose}>
+    <Modal title={q.data?.title || "Loading..."} onClose={onClose} size="lg">
       {q.data?.subtitle && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{q.data.subtitle}</div>}
       {q.isLoading && <Loading />}
       {q.isError && <ErrorState message="Couldn't load details." onRetry={() => q.refetch()} />}
