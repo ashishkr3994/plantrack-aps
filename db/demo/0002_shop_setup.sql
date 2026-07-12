@@ -1,5 +1,5 @@
 -- =====================================================================
--- DEMO SHOP SETUP — one plant, one 10-hour shift, plasma/welding/CNC/
+-- DEMO SHOP SETUP - one plant, one 10-hour shift, plasma/welding/CNC/
 -- coating/QC routing for a metal-fabrication (plasma cutting, welding,
 -- coating) shop.
 -- =====================================================================
@@ -48,7 +48,7 @@ INSERT INTO routing_operation
 SELECT id, 40, 'Coating', 25, 3.0, 15, 10, 30, NULL, 'COAT-POWDER'
 FROM routing WHERE route_id='R-FAB-STD';
 
--- QC/Inspection: deliberately long — weld cooldown hold + visual + dye-
+-- QC/Inspection: deliberately long - weld cooldown hold + visual + dye-
 -- penetrant + sampled UT, per real fabrication-shop NDT practice.
 INSERT INTO routing_operation
   (routing_id, operation_seq, work_center, setup_min, run_per_unit_min, queue_min, move_min,
