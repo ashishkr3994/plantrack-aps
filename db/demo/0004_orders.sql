@@ -2,7 +2,7 @@
 -- DEMO ORDERS — 10 orders, each fabricated to demonstrate one PlanTrack
 -- capability. ALL DATES ARE RELATIVE TO THE LOAD MOMENT (CURRENT_DATE),
 -- so the "days until due" tensions each scenario depends on hold no
--- matter when this script is run.
+-- matter when this script is run
 --
 -- Calibrated against real solver behaviour for this shop (one plant, one
 -- 10h shift, plasma->weld->CNC->coat->QC): a solo order finishes ~2-4
