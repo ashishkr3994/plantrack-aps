@@ -5,7 +5,7 @@ export function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
 }
 
-export function Loading({ label = "Loading…" }: { label?: string }) {
+export function Loading({ label = "Loading..." }: { label?: string }) {
   return (
     <div className="state">
       <Spinner /> <span style={{ marginLeft: 8 }}>{label}</span>
@@ -68,11 +68,11 @@ export function statusTone(status: string | null | undefined): Tone {
 }
 
 export function Modal({
-  title, children, footer, onClose,
-}: { title: string; children: ReactNode; footer?: ReactNode; onClose: () => void }) {
+  title, children, footer, onClose, size,
+}: { title: string; children: ReactNode; footer?: ReactNode; onClose: () => void; size?: "lg" }) {
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal${size === "lg" ? " modal-lg" : ""}`} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="hd">{title}</div>
         <div className="bd">{children}</div>
         {footer && <div className="ft">{footer}</div>}
