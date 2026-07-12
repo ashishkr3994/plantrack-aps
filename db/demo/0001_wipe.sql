@@ -1,7 +1,7 @@
 -- =====================================================================
--- DEMO RESET — wipe all orders and everything CASCADE-tied to them,
+-- DEMO RESET - wipe all orders and everything CASCADE-tied to them,
 -- plus master data we're replacing (plants/calendar/routings/products).
--- Users (app_user) are NOT touched — logins stay intact.
+-- Users (app_user) are NOT touched - logins stay intact.
 -- =====================================================================
 BEGIN;
 
@@ -13,7 +13,7 @@ DELETE FROM order_header;
 DELETE FROM capacity_load;
 DELETE FROM solve_job;
 
--- Wipe old products/BOM/routings/plants/calendar/lead-times — we're
+-- Wipe old products/BOM/routings/plants/calendar/lead-times - we're
 -- replacing the whole shop model, not just the orders.
 DELETE FROM bom_line;
 DELETE FROM product;
