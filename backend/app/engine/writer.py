@@ -18,6 +18,7 @@ from .loader import SchedulingInput
 from .cpsat_engine import ScheduleResult
 from .capacity import compute_capacity_load
 from .deviation import run_deviation_engine
+from .loader import PACK_DAYS, DISPATCH_DAYS, TRANSPORT_DAYS
 
 
 def _next_version(db: Session, order_pk: int) -> int:
@@ -46,9 +47,9 @@ def persist(db: Session, si: SchedulingInput, result: ScheduleResult,
         prod_end = cal.to_datetime(prod_end_min)
         material_ready = cal.to_datetime(o.material_ready_min)
         # simple downstream milestones off prod_end
-        pack = prod_end + timedelta(days=1)
-        dispatch = pack + timedelta(days=1)
-        delivery = dispatch + timedelta(days=2)
+        pack = prod_end + timedelta(days=PACK_DAYS)
+        dispatch = pack + timedelta(days=DISPATCH_DAYS)
+        delivery = dispatch + timedelta(days=TRANSPORT_DAYS)
         buffer_hrs = round((o.committed_due_dt - delivery).total_seconds() / 3600, 2)
 
         version = _next_version(db, o.pk)
