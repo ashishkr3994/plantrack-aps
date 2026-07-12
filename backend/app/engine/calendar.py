@@ -28,18 +28,20 @@ class WorkingCalendar:
 
     def to_datetime(self, working_min: int) -> datetime:
         """Map a working-minute offset (from origin) to a wall-clock datetime,
-        walking forward over working days only."""
-        full_days, rem = divmod(int(working_min), self.minutes_per_day)
+        walking forward over working days only. Guaranteed monotonic: a larger
+        working_min never maps to an earlier wall-clock time."""
+        wm = max(0, int(working_min))
+        full_days, rem = divmod(wm, self.minutes_per_day)
+        # Find the first working day on/after the origin date (day index 0).
         d = self.origin.date()
-        # advance over working days
+        while not self.is_working_day(d):
+            d = d + timedelta(days=1)
+        # Advance forward by `full_days` additional WORKING days.
         counted = 0
         while counted < full_days:
             d = d + timedelta(days=1)
             if self.is_working_day(d):
                 counted += 1
-        # ensure landing day is a working day
-        while not self.is_working_day(d):
-            d = d + timedelta(days=1)
         return self._day_start(d) + timedelta(minutes=rem)
 
     def working_minutes_between(self, start: datetime, end: datetime) -> int:
