@@ -18,7 +18,7 @@ def _now():
 
 @celery_app.task(name="plantrack.solve_schedule")
 def solve_schedule(job_id: str, mode: str = "forward", time_budget_s: int = 30,
-                   order_ids=None):
+                   order_ids=None, leveling: str = "off"):
     db = SessionLocal()
     try:
         job = db.query(models.SolveJob).filter_by(job_id=job_id).first()
@@ -28,7 +28,7 @@ def solve_schedule(job_id: str, mode: str = "forward", time_budget_s: int = 30,
             db.commit()
 
         si = load_scheduling_input(db, order_ids=order_ids)
-        result = cpsat_solve(si, max_seconds=time_budget_s)
+        result = cpsat_solve(si, max_seconds=time_budget_s, leveling=leveling)
 
         summary = {
             "status": result.status,
