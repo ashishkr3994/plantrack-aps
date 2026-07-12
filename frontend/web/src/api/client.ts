@@ -7,7 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, RecommendationResult,
-  DashboardKpis, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
+  DashboardKpis, KpiDrilldown, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
 } from "./types";
 
 // In dev, Vite proxies /api -> backend. In prod, set VITE_API_BASE.
@@ -96,6 +96,7 @@ export const api = {
   capacityConflicts: () => request<Record<string, unknown>[]>("/dashboard/capacity-conflicts"),
   openAlerts: () => request<Record<string, unknown>[]>("/dashboard/open-alerts"),
   kpis: () => request<DashboardKpis>("/dashboard/kpis"),
+  kpiDrilldown: (key: string) => request<KpiDrilldown>(`/dashboard/kpi-drilldown/${key}`),
   delayReasons: () => request<Array<{ root_cause: string; count: number; total_hours: number }>>("/dashboard/delay-reasons"),
   recoveryPipeline: () => request<Array<Record<string, unknown>>>("/dashboard/recovery-pipeline"),
   capacityHeatmap: () => request<CapacityHeatmap>("/dashboard/capacity-heatmap"),
