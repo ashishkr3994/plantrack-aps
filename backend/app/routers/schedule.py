@@ -1,4 +1,3 @@
-
 """Scheduling endpoints: kick off an async CP-SAT solve, poll its status,
 and read the resulting schedule.
 """
@@ -24,6 +23,7 @@ class SolveRequest(BaseModel):
     mode: str = "forward"
     time_budget_s: int = 30
     order_ids: list[str] | None = None     # business ids; null = all
+    leveling: str = "off"                  # 'off' | 'soft' | 'strict'
 
 
 class SolveJobRead(BaseModel):
@@ -38,6 +38,7 @@ def kick_off_solve(req: SolveRequest, actor: models.AppUser = Depends(require_ro
     """Queue an async solve. Returns immediately with a job id to poll.
     Never blocks on the solver."""
     job_id = str(uuid.uuid4())
+    leveling = req.leveling if req.leveling in ("off", "soft", "strict") else "off"
     job = models.SolveJob(
         job_id=job_id, status="queued", mode=req.mode,
         time_budget_s=req.time_budget_s, order_ids=req.order_ids,
@@ -45,8 +46,8 @@ def kick_off_solve(req: SolveRequest, actor: models.AppUser = Depends(require_ro
     db.add(job)
     db.commit()
     # dispatch to Celery (eager in tests/dev; real worker in prod)
-    solve_schedule.delay(job_id, req.mode, req.time_budget_s, req.order_ids)
-    audit(db, actor, "solve", "schedule", job_id, {"mode": req.mode, "budget_s": req.time_budget_s})
+    solve_schedule.delay(job_id, req.mode, req.time_budget_s, req.order_ids, leveling)
+    audit(db, actor, "solve", "schedule", job_id, {"mode": req.mode, "budget_s": req.time_budget_s, "leveling": leveling})
     return SolveJobRead(job_id=job_id, status=job.status)
 
 
@@ -91,7 +92,7 @@ class RecoverRequest(BaseModel):
 def recover(order_id: str, body: RecoverRequest,
             actor: models.AppUser = Depends(require_role("planner")),
             db: Session = Depends(get_db)):
-    """Targeted single-order recovery — re-solve just this order with recovery
+    """Targeted single-order recovery - re-solve just this order with recovery
     levers (overtime/partial qty/mode), persist a new version, log it."""
     try:
         opts = RecoveryOptions(
@@ -114,7 +115,7 @@ def recommend(order_id: str, time_budget_s: int = 8,
              db: Session = Depends(get_db)):
     """Read-only: try a small set of overtime levels and suggest the smallest
     one that clears this order's lateness (or the best achievable). Nothing is
-    persisted — this is a preview to inform a planner's recovery decision."""
+    persisted - this is a preview to inform a planner's recovery decision."""
     from ..engine.recovery import recommend_recovery
     try:
         return recommend_recovery(db, order_id, time_budget_s=min(time_budget_s, 20))
