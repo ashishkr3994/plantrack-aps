@@ -47,57 +47,25 @@ def summary(db: Session = Depends(get_db)):
 
 @router.get("/kpis")
 def kpis(db: Session = Depends(get_db)):
-    """Richer KPI set for the dashboard: adherence, on-time delivery, risk counts.
-    Falls back gracefully when there is no schedule yet."""
-    def scalar(sql, default=0):
-        v = db.execute(text(sql)).scalar()
-        return v if v is not None else default
+    """Prototype-faithful KPI set. All six KPIs are derived from ONE consistent
+    per-order status classification (on/risk/delay/crit), matching the
+    control-tower prototype. Falls back gracefully when nothing is scheduled."""
+    from ..engine.kpi import compute_kpis
+    out = compute_kpis(db)
+    # products + open_alerts are cheap extras the dashboard also shows
+    out["products"] = db.execute(text("SELECT count(*) FROM product")).scalar() or 0
+    out["open_alerts"] = db.execute(
+        text("SELECT count(*) FROM alert_log WHERE status='open'")).scalar() or 0
+    return out
 
-    orders_total = scalar("SELECT count(*) FROM order_header")
-    products = scalar("SELECT count(*) FROM product")
-    open_alerts = scalar("SELECT count(*) FROM alert_log WHERE status='open'")
-    capacity_conflicts = scalar("SELECT count(*) FROM capacity_load WHERE overloaded")
-    material_at_risk = scalar("SELECT count(*) FROM material_status WHERE status IN ('late','risk')")
 
-    # scheduled orders (current baseline)
-    scheduled = scalar("SELECT count(*) FROM planned_schedule WHERE is_current")
-    # on-time = current schedule delivers on/before committed date
-    on_time = scalar("""
-        SELECT count(*) FROM planned_schedule ps
-        JOIN order_header o ON o.id = ps.order_id
-        WHERE ps.is_current AND ps.planned_delivery_dt <= o.committed_delivery_date::timestamptz + interval '1 day'
-    """)
-    # delayed / critical from open deviations
-    delayed = scalar("SELECT count(DISTINCT order_id) FROM deviation_log WHERE resolution_status='Open' AND severity IN ('High','Critical')")
-
-    otd_pct = round(100.0 * on_time / scheduled) if scheduled else None
-    # schedule adherence = scheduled orders that are not stale
-    not_stale = scalar("SELECT count(*) FROM planned_schedule WHERE is_current AND NOT is_stale")
-    adherence_pct = round(100.0 * not_stale / scheduled) if scheduled else None
-    # orders_at_risk = distinct orders in EITHER set, not a sum (an order can be
-    # both materially late AND carry an open High/Critical deviation — that's
-    # one at-risk order, not two).
-    at_risk = scalar("""
-        SELECT count(*) FROM (
-            SELECT order_id FROM material_status WHERE status IN ('late','risk')
-            UNION
-            SELECT order_id FROM deviation_log
-            WHERE resolution_status='Open' AND severity IN ('High','Critical')
-        ) x
-    """)
-
-    return {
-        "orders": orders_total,
-        "products": products,
-        "scheduled": scheduled,
-        "schedule_adherence_pct": adherence_pct,
-        "on_time_delivery_pct": otd_pct,
-        "orders_at_risk": at_risk,
-        "delayed_critical": delayed,
-        "material_at_risk": material_at_risk,
-        "capacity_conflicts": capacity_conflicts,
-        "open_alerts": open_alerts,
-    }
+@router.get("/kpi-drilldown/{key}")
+def kpi_drilldown(key: str, db: Session = Depends(get_db)):
+    """Orders behind a KPI, matching the prototype's click-through modals.
+    key in: adherence | risk | delayed | material | otd | capacity.
+    Each order row carries slip/buffer and risk-reason chips where applicable."""
+    from ..engine.kpi import drilldown
+    return drilldown(db, key)
 
 
 @router.get("/delay-reasons")
@@ -215,7 +183,7 @@ def order_detail(order_id: str, db: Session = Depends(get_db)):
 
 @router.get("/capacity-cell")
 def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db)):
-    """Which orders/operations load a given work-centre on a given day — the
+    """Which orders/operations load a given work-centre on a given day - the
     drill-down behind a heatmap cell. Shows what's breaching capacity there."""
     res = db.execute(text("""
         SELECT o.order_id, o.customer, o.priority,
@@ -247,7 +215,7 @@ def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db
 
 @router.get("/delayed-orders")
 def delayed_orders(db: Session = Depends(get_db)):
-    """Every order with an open High/Critical deviation — the list behind the
+    """Every order with an open High/Critical deviation - the list behind the
     Delayed/Critical KPI drill-down. Each row carries its root cause so a
     planner can see *why* before deciding on a recovery action."""
     return _rows(db, """
