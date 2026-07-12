@@ -4,13 +4,23 @@ from SQLAlchemy.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from .. import models
 from .calendar import WorkingCalendar
+
+# Fixed downstream lead time (days) between production end and customer
+# delivery: pack + dispatch + transport. The solver targets production
+# finishing early enough that delivery (prod_end + this lead) lands by the
+# committed date, so we subtract this here when computing the due target.
+# The writer imports these SAME constants so the two never drift apart.
+PACK_DAYS = 1
+DISPATCH_DAYS = 1
+TRANSPORT_DAYS = 2
+DELIVERY_LEAD_DAYS = PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS  # = 4
 
 
 @dataclass
@@ -53,7 +63,7 @@ class SchedulingInput:
     work_center_capacity: dict[str, int]
     # Sequence-dependent changeover minutes between setup families on the same
     # machine: changeover_minutes[(from_family, to_family)] = minutes.
-    # Missing pairs default to 0 (same family) — see engine.
+    # Missing pairs default to 0 (same family) - see engine.
     changeover_minutes: dict[tuple, int] = field(default_factory=dict)
     # Optional warm start: {(order_pk, operation_seq): start_minute} from the
     # current schedule, fed to the solver as hints so re-solves stay stable.
@@ -120,14 +130,19 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             ready_dt = ready_dt.replace(tzinfo=timezone.utc)
         material_ready_min = max(0, cal.working_minutes_between(origin, ready_dt))
 
-        # committed due offset
-        due_dt = datetime.combine(o.committed_delivery_date, datetime.min.time(), tzinfo=timezone.utc)
-        committed_due_min = max(0, cal.working_minutes_between(origin, due_dt))
+        # committed due offset. The committed date is the customer DELIVERY
+        # deadline; production must finish DELIVERY_LEAD_DAYS earlier so that
+        # delivery (prod_end + pack + dispatch + transport) still lands by the
+        # committed date. So the solver's production due target is the
+        # committed date minus the delivery lead.
+        delivery_due_dt = datetime.combine(o.committed_delivery_date, datetime.min.time(), tzinfo=timezone.utc)
+        prod_due_dt = delivery_due_dt - timedelta(days=DELIVERY_LEAD_DAYS)
+        committed_due_min = max(0, cal.working_minutes_between(origin, prod_due_dt))
 
         orders.append(OrderInput(
             order_id=o.order_id, pk=o.id, route_id=route_id, qty=int(o.order_qty),
             priority=str(o.priority), committed_due_min=committed_due_min,
-            material_ready_min=material_ready_min, committed_due_dt=due_dt,
+            material_ready_min=material_ready_min, committed_due_dt=delivery_due_dt,
             ops=routes[route_id],
         ))
 
