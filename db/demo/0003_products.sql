@@ -1,5 +1,5 @@
 -- =====================================================================
--- DEMO PRODUCTS — realistic to a plasma-cutting / welding / CNC / powder-
+-- DEMO PRODUCTS - realistic to a plasma-cutting / welding / CNC / powder-
 -- coating fabrication shop. Structural-steel family uses R-FAB-STD;
 -- pressure-vessel family uses R-FAB-PV (heavier NDT, longer weld).
 -- =====================================================================
@@ -18,7 +18,7 @@ SELECT 'P-VES-500', 'Pressure Vessel Head (ASME)', 'Pressure Vessel', id FROM ro
 INSERT INTO product(product_id, name, family, routing_id)
 SELECT 'P-TNK-600', 'Welded Tank Shell Section', 'Pressure Vessel', id FROM routing WHERE route_id='R-FAB-PV';
 
--- BOM lines: plate steel, welding consumables, coating, fasteners —
+-- BOM lines: plate steel, welding consumables, coating, fasteners -
 -- realistic to this shop.
 INSERT INTO bom_line(product_id, material, qty_per_unit, uom, supplier, lead_days)
 SELECT id, 'Hot-rolled steel plate, 10mm', 18.5, 'kg', 'Bharat Steel Traders', 4 FROM product WHERE product_id='P-BRK-100';
