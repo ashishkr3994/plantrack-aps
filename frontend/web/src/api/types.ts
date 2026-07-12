@@ -349,6 +349,15 @@ export interface DashboardKpis {
   open_alerts: number;
 }
 
+export interface KpiReason { type: "time" | "buffer" | "material" | "capacity"; text: string; }
+export interface KpiDrillRow {
+  order_id?: string; product_id?: number; customer?: string; priority?: string;
+  status?: string; slip_hrs?: number; buffer_health?: number; reasons?: KpiReason[];
+  // capacity rows
+  work_center?: string; load_date?: string; demand_min?: number; available_min?: number;
+}
+export interface KpiDrilldown { title: string; subtitle: string; rows: KpiDrillRow[]; }
+
 export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
 export interface CapacityHeatmap {
   work_centers: string[];
