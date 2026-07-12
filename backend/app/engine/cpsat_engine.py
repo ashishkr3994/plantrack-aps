@@ -1,5 +1,4 @@
-
-"""CP-SAT scheduling engine — the production optimisation core.
+"""CP-SAT scheduling engine - the production optimisation core.
 
 Consumes a SchedulingInput (from loader.py) and produces an optimised schedule.
 
@@ -86,7 +85,8 @@ def _changeover(si: SchedulingInput, from_family, to_family) -> int:
     return int(si.changeover_minutes.get((from_family, to_family), 0))
 
 
-def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8) -> ScheduleResult:
+def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8,
+          leveling: str = "off") -> ScheduleResult:
     model = cp_model.CpModel()
 
     # horizon: serial worst case + latest material ready + a setup allowance
@@ -158,15 +158,52 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8) -> S
             # disaggregation); intrinsic op setup still applies via duration.
 
     # objective
+    #
+    # Tardiness is always the dominant term (x1000): meeting committed dates
+    # beats everything, so leveling never sacrifices a due date. Beyond that,
+    # a JIT earliness penalty discourages finishing far ahead of the promise
+    # date -- this spreads work across the calendar (load leveling) instead of
+    # clustering it early the way a pure makespan objective does.
+    #
+    #   leveling='off'    -> legacy behaviour: minimize makespan (finish ASAP)
+    #   leveling='soft'   -> mild earliness penalty; still uses idle machine time
+    #   leveling='strict' -> strong earliness penalty; holds orders to the
+    #                        promise window even if machines sit idle
+    #
+    # We never breach capacity to hit a date (no-overlap stays hard); orders
+    # that cannot fit simply run late and are surfaced for an overtime
+    # RECOMMENDATION elsewhere, rather than the solver over-utilising a machine.
     tardiness_terms = []
+    earliness_terms = []
+    want_earliness = leveling in ("soft", "strict")
     for o in si.orders:
         w = PRIORITY_WEIGHT.get(o.priority, 1)
         late = model.NewIntVar(0, horizon, f"late_{o.order_id}")
         model.Add(late >= order_end[o.pk] - o.committed_due_min)
         tardiness_terms.append(w * late)
+        # earliness = how far BEFORE the committed date the order finishes.
+        # Only modelled when leveling is active. Upper bound must cover due
+        # dates beyond the scheduling horizon (far-future commitments), else
+        # the model could be forced infeasible.
+        if want_earliness:
+            early_ub = max(horizon, o.committed_due_min)
+            early = model.NewIntVar(0, early_ub, f"early_{o.order_id}")
+            model.Add(early >= o.committed_due_min - order_end[o.pk])
+            earliness_terms.append(early)
+
     makespan = model.NewIntVar(0, horizon, "makespan")
     model.AddMaxEquality(makespan, list(order_end.values()))
-    model.Minimize(sum(tardiness_terms) * 1000 + makespan)
+
+    if leveling == "strict":
+        # hold orders to the promise window: earliness weighted heavily, makespan
+        # dropped entirely so the solver has no incentive to pull work forward.
+        model.Minimize(sum(tardiness_terms) * 1000 + sum(earliness_terms) * 4)
+    elif leveling == "soft":
+        # prefer JIT but keep utilisation high: mild earliness penalty, and a
+        # light makespan tie-breaker so idle capacity still gets used.
+        model.Minimize(sum(tardiness_terms) * 1000 + sum(earliness_terms) + makespan)
+    else:  # 'off' -> legacy
+        model.Minimize(sum(tardiness_terms) * 1000 + makespan)
 
     # warm start: hint each op's start so re-solves stay close to the prior plan
     if si.warm_start:
@@ -253,7 +290,7 @@ def _extract(solver, si, tasks, order_end, machine_ops, res: ScheduleResult):
         order_bottleneck = max(order_machines, key=lambda m: machine_load[m]) if order_machines else None
         reason = None
         if lateness > 0:
-            reason = (f"Late {round(lateness/60,1)}h — limited by {order_bottleneck} "
+            reason = (f"Late {round(lateness/60,1)}h - limited by {order_bottleneck} "
                       f"(busiest machine on its route)")
         elif o.material_ready_min > 0:
             reason = "On time"
