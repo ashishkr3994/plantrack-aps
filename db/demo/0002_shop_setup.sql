@@ -1,6 +1,6 @@
 -- =====================================================================
 -- DEMO SHOP SETUP — one plant, one 10-hour shift, plasma/welding/CNC/
--- coating/QC routing for a metal-fabrication (plasma cutting, welding,
+-- coating/QC routing for a metal-fabrication (plasma cutting, welding
 -- coating) shop
 -- =====================================================================
 BEGIN;
