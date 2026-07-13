@@ -110,6 +110,7 @@ export interface EventCreate {
   event_qty?: number | null;
   downtime_reason?: string | null;
   downtime_mins?: number;
+  downtime_whole_wc?: boolean;
   entered_by?: string | null;
 }
 
