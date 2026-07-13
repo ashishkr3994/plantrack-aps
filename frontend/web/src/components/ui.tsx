@@ -44,15 +44,18 @@ export function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
 
 // Map a status/priority string to a pill tone.
 export function statusTone(status: string | null | undefined): Tone {
+  // Health/status severity ONLY. Red (risk) = bad, amber (warn) = at-risk,
+  // green (ok) = good. Priority is handled separately by PriorityPill so that
+  // priority level never borrows a health colour.
   switch ((status ?? "").toLowerCase()) {
     case "ready":
     case "feasible":
     case "on":
+    case "on track":
     case "ok":
       return "ok";
     case "risk":
     case "at risk":
-    case "med":
       return "warn";
     case "late":
     case "delay":
@@ -60,11 +63,20 @@ export function statusTone(status: string | null | undefined): Tone {
     case "critical":
     case "infeasible":
       return "risk";
-    case "high":
-      return "info";
     default:
       return "muted";
   }
+}
+
+/**
+ * Priority pill with its own neutral, weight-based styling -- deliberately
+ * separate from health colours so a HIGH-priority healthy order is not shown
+ * in a warning/alert colour. HIGH reads as emphasised, LOW as muted.
+ */
+export function PriorityPill({ priority }: { priority: string | null | undefined }) {
+  const p = (priority ?? "").toUpperCase();
+  const cls = p === "HIGH" ? "pill-prio-high" : p === "LOW" ? "pill-prio-low" : "pill-prio-med";
+  return <span className={`pill ${cls}`}>{p || "-"}</span>;
 }
 
 export function Modal({
