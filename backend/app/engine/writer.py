@@ -46,10 +46,14 @@ def persist(db: Session, si: SchedulingInput, result: ScheduleResult,
         prod_start = cal.to_datetime(prod_start_min)
         prod_end = cal.to_datetime(prod_end_min)
         material_ready = cal.to_datetime(o.material_ready_min)
-        # simple downstream milestones off prod_end
-        pack = prod_end + timedelta(days=PACK_DAYS)
-        dispatch = pack + timedelta(days=DISPATCH_DAYS)
-        delivery = dispatch + timedelta(days=TRANSPORT_DAYS)
+        # downstream milestones off prod_end. Total delivery lead is per-family
+        # (o.delivery_lead_days), matching the loader's production due target so
+        # solver and reporting agree on on-time. Pack/dispatch are shown as
+        # intermediate points within that lead; delivery uses the full lead.
+        lead = int(getattr(o, "delivery_lead_days", PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS))
+        pack = prod_end + timedelta(days=min(PACK_DAYS, lead))
+        dispatch = pack + timedelta(days=min(DISPATCH_DAYS, max(0, lead - PACK_DAYS)))
+        delivery = prod_end + timedelta(days=lead)
         buffer_hrs = round((o.committed_due_dt - delivery).total_seconds() / 3600, 2)
 
         version = _next_version(db, o.pk)
