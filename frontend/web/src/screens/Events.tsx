@@ -18,7 +18,7 @@ const EVENT_TYPES = [
 ];
 
 function fmtDT(s: unknown): string {
-  if (!s || typeof s !== "string") return "—";
+  if (!s || typeof s !== "string") return "-";
   const d = new Date(s);
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
@@ -39,6 +39,7 @@ export function Events() {
   const [qty, setQty] = useState<number | "">("");
   const [downtimeReason, setDowntimeReason] = useState("");
   const [downtimeMins, setDowntimeMins] = useState<number | "">("");
+  const [wholeWc, setWholeWc] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logged, setLogged] = useState<{ orderId: number; orderBiz: string } | null>(null);
@@ -67,6 +68,7 @@ export function Events() {
         event_qty: qty === "" ? null : Number(qty),
         downtime_reason: isDowntime && downtimeReason ? downtimeReason : null,
         downtime_mins: isDowntime && downtimeMins !== "" ? Number(downtimeMins) : 0,
+        downtime_whole_wc: isDowntime ? wholeWc : false,
         entered_by: user?.username ?? null,
       });
       setLogged({ orderId: orderId as number, orderBiz: bizId });
@@ -86,7 +88,7 @@ export function Events() {
     <div className="stack">
       <h2>Execution events</h2>
       <p className="muted" style={{ margin: 0 }}>
-        Log what actually happens on the floor — downtime, starts, completions, scrap, material
+        Log what actually happens on the floor - downtime, starts, completions, scrap, material
         arrivals. Events feed the deviation engine; after logging a disruption you can re-plan
         the affected order to see updated dates.
       </p>
@@ -100,8 +102,8 @@ export function Events() {
             <div style={{ width: 220 }}>
               <label>Order</label>
               <select value={orderId} onChange={(e) => setOrderId(e.target.value ? Number(e.target.value) : "")} disabled={!canLog}>
-                <option value="">Select order…</option>
-                {orders.data?.map((o) => <option key={o.id} value={o.id}>{o.order_id} — {o.customer}</option>)}
+                <option value="">Select order...</option>
+                {orders.data?.map((o) => <option key={o.id} value={o.id}>{o.order_id} - {o.customer}</option>)}
               </select>
             </div>
             <div style={{ width: 190 }}>
@@ -112,7 +114,7 @@ export function Events() {
             </div>
             <div style={{ width: 130 }}>
               <label>Operation seq</label>
-              <input type="number" min={1} placeholder="—" value={opSeq} disabled={!canLog}
+              <input type="number" min={1} placeholder="-" value={opSeq} disabled={!canLog}
                 onChange={(e) => setOpSeq(e.target.value ? Number(e.target.value) : "")} />
             </div>
             <div style={{ width: 200 }}>
@@ -133,6 +135,18 @@ export function Events() {
                 <input type="number" min={0} value={downtimeMins} disabled={!canLog}
                   onChange={(e) => setDowntimeMins(e.target.value ? Number(e.target.value) : "")} />
               </div>
+              <div style={{ width: 320 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: canLog ? "pointer" : "default" }}>
+                  <input type="checkbox" checked={wholeWc} disabled={!canLog} style={{ width: "auto" }}
+                    onChange={(e) => setWholeWc(e.target.checked)} />
+                  <span>Affects the entire work centre (all orders)</span>
+                </label>
+                <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                  Leave unchecked for an operational pause on this order only. Check
+                  if the machine itself is down, so the optimiser reschedules every
+                  order on it around the outage.
+                </div>
+              </div>
             </div>
           )}
 
@@ -144,14 +158,14 @@ export function Events() {
             </div>
           )}
 
-          <div><button className="primary" onClick={submit} disabled={!canLog || busy}>{busy ? "Logging…" : "Log event"}</button></div>
+          <div><button className="primary" onClick={submit} disabled={!canLog || busy}>{busy ? "Logging..." : "Log event"}</button></div>
 
           {error && <div className="banner err">{error}</div>}
           {logged && (
             <div className="banner ok">
               Event logged for <strong>{logged.orderBiz}</strong>. To see how the plan changes,{" "}
               <button className="ghost" style={{ padding: "2px 8px" }} onClick={() => nav("/reschedule")}>
-                run recovery / re-plan →
+                run recovery / re-plan &rarr;
               </button>
             </div>
           )}
@@ -172,10 +186,10 @@ export function Events() {
                     <tr key={e.id}>
                       <td><Pill tone={e.event_type === "pause" || e.event_type === "scrap" ? "risk" : "info"}>{e.event_type}</Pill></td>
                       <td>{fmtDT(e.event_timestamp)}</td>
-                      <td className="num">{e.operation_seq ?? "—"}</td>
-                      <td className="num">{e.event_qty ?? "—"}</td>
-                      <td>{e.downtime_mins ? `${e.downtime_mins}m — ${e.downtime_reason ?? ""}` : "—"}</td>
-                      <td className="muted">{e.entered_by ?? "—"}</td>
+                      <td className="num">{e.operation_seq ?? "-"}</td>
+                      <td className="num">{e.event_qty ?? "-"}</td>
+                      <td>{e.downtime_mins ? `${e.downtime_mins}m - ${e.downtime_reason ?? ""}` : "-"}</td>
+                      <td className="muted">{e.entered_by ?? "-"}</td>
                     </tr>
                   ))}
                 </tbody>
