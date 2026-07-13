@@ -1,18 +1,46 @@
 import { useMemo, useState } from "react";
 import { useOrders, useProducts, useCreateOrder } from "@/hooks/queries";
-import { Loading, ErrorState, Pill, statusTone, Modal } from "@/components/ui";
+import { Loading, ErrorState, PriorityPill, Modal } from "@/components/ui";
+import { fmtDate, fmtNum } from "@/lib/format";
 import { ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
 import type { OrderCreate, Priority, SchedMode } from "@/api/types";
 
-function fmtDate(s: string) {
-  return new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
+type SortKey = "order_id" | "committed_delivery_date" | "priority" | "order_qty";
 
 export function Orders() {
   const orders = useOrders();
   const { hasRole } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
+  const [search, setSearch] = useState("");
+  const [prioFilter, setPrioFilter] = useState<"all" | "HIGH" | "MED" | "LOW">("all");
+  const [sortKey, setSortKey] = useState<SortKey>("committed_delivery_date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const toggleSort = (k: SortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir("asc"); }
+  };
+  const caret = (k: SortKey) => (k === sortKey ? (sortDir === "asc" ? "\u25B2" : "\u25BC") : "\u2195");
+
+  const rows = useMemo(() => {
+    let r = orders.data ?? [];
+    const q = search.trim().toLowerCase();
+    if (q) r = r.filter((o) => o.order_id.toLowerCase().includes(q));
+    if (prioFilter !== "all") r = r.filter((o) => (o.priority ?? "").toUpperCase() === prioFilter);
+    const prioRank: Record<string, number> = { HIGH: 0, MED: 1, LOW: 2 };
+    const sorted = [...r].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "order_id") cmp = a.order_id.localeCompare(b.order_id);
+      else if (sortKey === "committed_delivery_date")
+        cmp = new Date(a.committed_delivery_date).getTime() - new Date(b.committed_delivery_date).getTime();
+      else if (sortKey === "priority")
+        cmp = (prioRank[(a.priority ?? "").toUpperCase()] ?? 9) - (prioRank[(b.priority ?? "").toUpperCase()] ?? 9);
+      else if (sortKey === "order_qty") cmp = Number(a.order_qty) - Number(b.order_qty);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [orders.data, search, prioFilter, sortKey, sortDir]);
 
   return (
     <div className="stack">
@@ -22,29 +50,48 @@ export function Orders() {
       </div>
 
       <section className="card">
+        <div className="hd">
+          <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input type="search" placeholder="Search Order ID..." value={search}
+              onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
+            <select value={prioFilter} onChange={(e) => setPrioFilter(e.target.value as typeof prioFilter)} style={{ width: 150 }}>
+              <option value="all">All priorities</option>
+              <option value="HIGH">HIGH only</option>
+              <option value="MED">MED only</option>
+              <option value="LOW">LOW only</option>
+            </select>
+          </div>
+        </div>
         <div className="bd" style={{ padding: 0 }}>
           {orders.isLoading && <Loading />}
           {orders.isError && <ErrorState message="Couldn't load orders." onRetry={() => orders.refetch()} />}
           {orders.data && orders.data.length === 0 && <div className="state">No orders yet. Create one to begin.</div>}
-          {orders.data && orders.data.length > 0 && (
-            <table>
+          {orders.data && orders.data.length > 0 && rows.length === 0 && (
+            <div className="state">No orders match your search or filter.</div>
+          )}
+          {rows.length > 0 && (
+            <table className="roomy">
               <thead>
                 <tr>
-                  <th>Order</th><th className="num">Product #</th><th>Customer</th>
-                  <th className="num">Qty</th><th>Order date</th><th>Committed</th>
-                  <th>Priority</th><th>Mode</th><th className="num">Replans</th>
+                  <th className="sortable" onClick={() => toggleSort("order_id")}>Order <span className="sort-caret">{caret("order_id")}</span></th>
+                  <th className="num">Product #</th><th>Customer</th>
+                  <th className="num sortable" onClick={() => toggleSort("order_qty")}>Qty <span className="sort-caret">{caret("order_qty")}</span></th>
+                  <th>Order date</th>
+                  <th className="sortable" onClick={() => toggleSort("committed_delivery_date")}>Committed <span className="sort-caret">{caret("committed_delivery_date")}</span></th>
+                  <th className="sortable" onClick={() => toggleSort("priority")}>Priority <span className="sort-caret">{caret("priority")}</span></th>
+                  <th>Mode</th><th className="num">Replans</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.data.map((o) => (
+                {rows.map((o) => (
                   <tr key={o.id}>
                     <td className="mono">{o.order_id}</td>
                     <td className="num">{o.product_id}</td>
                     <td>{o.customer}</td>
-                    <td className="num">{o.order_qty}</td>
+                    <td className="num">{fmtNum(o.order_qty)}</td>
                     <td>{fmtDate(o.order_date)}</td>
                     <td>{fmtDate(o.committed_delivery_date)}</td>
-                    <td><Pill tone={statusTone(o.priority)}>{o.priority}</Pill></td>
+                    <td><PriorityPill priority={o.priority} /></td>
                     <td className="muted">{o.sched_mode}</td>
                     <td className="num">{o.replan_count}</td>
                   </tr>
@@ -136,7 +183,7 @@ function CreateOrderModal({ onClose }: { onClose: () => void }) {
         <>
           <button onClick={onClose} disabled={create.isPending}>Cancel</button>
           <button className="primary" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? "Creating…" : "Create order"}
+            {create.isPending ? "Creating..." : "Create order"}
           </button>
         </>
       }
@@ -151,9 +198,9 @@ function CreateOrderModal({ onClose }: { onClose: () => void }) {
         </Field>
         <Field label="Product" error={errors.product_id}>
           <select value={form.product_id} onChange={(e) => set("product_id", e.target.value)}>
-            <option value="">{products.isLoading ? "Loading…" : "Select…"}</option>
+            <option value="">{products.isLoading ? "Loading..." : "Select..."}</option>
             {productOptions.map((p) => (
-              <option key={p.id} value={p.id}>{p.product_id} — {p.name}</option>
+              <option key={p.id} value={p.id}>{p.product_id} - {p.name}</option>
             ))}
           </select>
         </Field>
@@ -191,4 +238,3 @@ function Field({ label, error, children }: { label: string; error?: string; chil
     </div>
   );
 }
-
