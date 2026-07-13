@@ -349,6 +349,7 @@ export interface DashboardKpis {
   material_at_risk: number;
   capacity_conflicts: number;
   open_alerts: number;
+  last_updated?: string | null;
 }
 
 export interface KpiReason { type: "time" | "buffer" | "material" | "capacity"; text: string; }
@@ -359,6 +360,15 @@ export interface KpiDrillRow {
   work_center?: string; load_date?: string; demand_min?: number; available_min?: number;
 }
 export interface KpiDrilldown { title: string; subtitle: string; rows: KpiDrillRow[]; }
+
+export interface BottleneckRec {
+  work_center: string;
+  overloaded_days: number;
+  total_days: number;
+  peak_load_pct: number;
+  avg_overload_pct: number;
+  recommendation: string;
+}
 
 export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
 export interface CapacityHeatmap {
