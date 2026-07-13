@@ -19,6 +19,7 @@ function fmtDT(s: string | null | undefined): string {
 
 export function DelayedOrders() {
   const q = useQuery({ queryKey: ["delayed-orders"], queryFn: api.delayedOrders });
+  const overtime = useQuery({ queryKey: ["overtime-recs"], queryFn: api.overtimeRecommendations });
   const [open, setOpen] = useState<DelayedOrderRow | null>(null);
 
   return (
@@ -28,6 +29,17 @@ export function DelayedOrders() {
         Every order carrying an open High or Critical deviation. Click one to see why it's
         delayed and get a recommended recovery you can apply directly.
       </p>
+
+      {overtime.data && overtime.data.length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
+          {overtime.data.map((r) => (
+            <div key={r.order_id} className="bottleneck-banner" style={{ background: "var(--ok-bg)", borderColor: "#bfe3cd", borderLeftColor: "var(--ok)" }}>
+              <span className="bb-icon" style={{ color: "var(--ok)" }} aria-hidden="true">&#9200;</span>
+              <span className="bb-text">{r.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <section className="card">
         <div className="hd">
