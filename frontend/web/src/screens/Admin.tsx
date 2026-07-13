@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import { Loading, ErrorState, Pill, Modal } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 
 export function Admin() {
   return (
@@ -47,7 +48,7 @@ function Users() {
               {users.data.map((u) => (
                 <tr key={u.id}>
                   <td className="mono">{u.username}</td>
-                  <td>{u.full_name ?? "—"}</td>
+                  <td>{u.full_name ?? "-"}</td>
                   <td style={{ width: 150 }}>
                     <select
                       value={u.role}
@@ -105,7 +106,7 @@ function CreateUserModal({
       footer={
         <>
           <button onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="primary" onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create user"}</button>
+          <button className="primary" onClick={submit} disabled={busy}>{busy ? "Creating..." : "Create user"}</button>
         </>
       }
     >
@@ -129,6 +130,7 @@ function CreateUserModal({
 
 
 function DemoData() {
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,8 +144,10 @@ function DemoData() {
     try {
       const r = await api.resetDemoData();
       setResult(r.note || "Demo data loaded.");
+      toast.success("Demo data reset - 10 orders reloaded.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Reset failed.");
+      toast.error("Demo data reset failed.");
     } finally {
       setBusy(false);
     }
@@ -160,7 +164,7 @@ function DemoData() {
         </p>
         <div>
           <button className="danger" onClick={() => setConfirming(true)} disabled={busy}>
-            {busy ? "Resetting…" : "Reset to demo data"}
+            {busy ? "Resetting..." : "Reset to demo data"}
           </button>
         </div>
         {result && (
@@ -184,7 +188,7 @@ function DemoData() {
 
 function AuditTrail() {
   const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.auditTrail(100) });
-  const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
+  const fmt = (s: string | null) => (s ? new Date(s).toLocaleString() : "-");
 
   return (
     <section className="card">
@@ -200,10 +204,10 @@ function AuditTrail() {
               {audit.data.map((a) => (
                 <tr key={a.id}>
                   <td>{fmt(a.at)}</td>
-                  <td className="mono">{a.actor_username ?? "—"}</td>
+                  <td className="mono">{a.actor_username ?? "-"}</td>
                   <td>{a.action}</td>
                   <td>{a.entity_type}</td>
-                  <td className="mono">{a.entity_id ?? "—"}</td>
+                  <td className="mono">{a.entity_id ?? "-"}</td>
                 </tr>
               ))}
             </tbody>
