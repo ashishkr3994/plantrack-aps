@@ -33,6 +33,38 @@ def bottleneck_recommendations(db: Session = Depends(get_db)):
     return _recs(db)
 
 
+@router.get("/overtime-recommendations")
+def overtime_recommendations(db: Session = Depends(get_db)):
+    """For each late order, check (read-only) whether overtime would recover it
+    and how much is needed -- the 'recommend the fix' half of the never-auto-
+    breach policy. Returns only orders where overtime helps, so a planner sees
+    actionable suggestions without any schedule being changed."""
+    from ..engine.recovery import recommend_recovery
+    # late orders = those with a current schedule and negative buffer
+    late = db.execute(text("""
+        SELECT o.order_id
+        FROM planned_schedule ps JOIN order_header o ON o.id = ps.order_id
+        WHERE ps.is_current AND ps.buffer_hrs < 0
+        ORDER BY o.order_id
+    """)).fetchall()
+    out = []
+    for (oid,) in late:
+        try:
+            rec = recommend_recovery(db, oid, time_budget_s=6)
+        except ValueError:
+            continue
+        hrs = rec.get("recommended_overtime_hrs")
+        # only surface where overtime is both needed and actually helps
+        if rec.get("feasible") and hrs and hrs > 0 and rec.get("projected_on_time"):
+            out.append({
+                "order_id": oid,
+                "recommended_overtime_hrs": hrs,
+                "message": (f"{oid} is late, but {hrs}h/day overtime would bring it "
+                            f"back on time. Apply a recovery to schedule it."),
+            })
+    return out
+
+
 @router.get("/open-alerts")
 def open_alerts(db: Session = Depends(get_db)):
     return _rows(db, "SELECT * FROM v_open_alerts")
