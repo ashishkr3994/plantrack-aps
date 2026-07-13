@@ -370,6 +370,22 @@ export interface BottleneckRec {
   recommendation: string;
 }
 
+export interface OvertimeRec {
+  order_id: string;
+  recommended_overtime_hrs: number;
+  message: string;
+}
+
+export interface LeadTimeRow {
+  product_family: string;
+  inbound_days: number;
+  qa_days: number;
+  packing_days: number;
+  transport_days: number;
+  buffer_days: number;
+  delivery_lead_days?: number;
+}
+
 export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
 export interface CapacityHeatmap {
   work_centers: string[];
