@@ -85,7 +85,7 @@ def _changeover(si: SchedulingInput, from_family, to_family) -> int:
     return int(si.changeover_minutes.get((from_family, to_family), 0))
 
 
-def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8,
+def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 1,
           leveling: str = "off") -> ScheduleResult:
     model = cp_model.CpModel()
 
@@ -254,6 +254,12 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8,
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max_seconds
     solver.parameters.num_search_workers = workers
+    # Fixed seed + single search worker (default) make solves fully
+    # deterministic: identical inputs yield the identical schedule run-to-run,
+    # so KPIs don't drift between solves on unchanged data. Multi-worker can be
+    # requested via `workers` for very large problems, at the cost of slight
+    # parallel-timing non-determinism. (Changing inputs still changes results.)
+    solver.parameters.random_seed = 42
     status = solver.Solve(model)
     feasible = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
