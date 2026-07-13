@@ -2,21 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { Loading, ErrorState, Pill, statusTone, Modal } from "@/components/ui";
-
-function fmtDate(s: unknown): string {
-  if (!s || typeof s !== "string") return "-";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return String(s);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-function fmtDT(s: unknown): string {
-  if (!s || typeof s !== "string") return "-";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return String(s);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
+import { Loading, ErrorState, Pill, statusTone, PriorityPill, Modal } from "@/components/ui";
+import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime } from "@/lib/format";
 
 export function Dashboard() {
   const nav = useNavigate();
@@ -30,6 +17,11 @@ export function Dashboard() {
 
   return (
     <div className="stack">
+      {kpis.data?.last_updated && (
+        <div className="muted" style={{ fontSize: 12, marginBottom: -6 }}>
+          Schedule last updated {fmtRelativeTime(kpis.data.last_updated)}
+        </div>
+      )}
       {/* KPI strip - six prototype KPIs, each opens a drill-down of the orders behind it */}
       <section className="grid kpis">
         {kpis.isLoading && <Loading label="Loading metrics..." />}
@@ -39,26 +31,32 @@ export function Dashboard() {
             <KpiCard label="Schedule adherence"
               value={kpis.data.schedule_adherence_pct == null ? "-" : `${kpis.data.schedule_adherence_pct}%`}
               sub="vs 95% target" tone={pctTone(kpis.data.schedule_adherence_pct)}
+              tip="On-track orders divided by total scheduled, against a 95% target. Measures how well the shop is keeping to plan."
               onClick={() => setDrillKey("adherence")} />
             <KpiCard label="On-time delivery"
               value={kpis.data.on_time_delivery_pct == null ? "-" : `${kpis.data.on_time_delivery_pct}%`}
               sub="customer promise" tone={pctTone(kpis.data.on_time_delivery_pct)}
+              tip="Orders whose delivery lands on or before the committed date, divided by total. The customer-facing promise metric."
               onClick={() => setDrillKey("otd")} />
             <KpiCard label="Orders at risk" value={kpis.data.orders_at_risk}
               sub={`of ${kpis.data.orders} active`}
               tone={kpis.data.orders_at_risk > 5 ? "alert" : kpis.data.orders_at_risk > 2 ? "warn" : "ok"}
+              tip="Every order not fully on track - slipping, buffer-thin, material-blocked or delayed."
               onClick={() => setDrillKey("risk")} />
             <KpiCard label="Delayed / critical" value={kpis.data.delayed_critical}
               sub="need recovery"
               tone={kpis.data.delayed_critical > 3 ? "alert" : kpis.data.delayed_critical > 1 ? "warn" : "ok"}
+              tip="Orders slipping past the delay threshold or predicted to breach delivery - the ones needing a recovery action."
               onClick={() => setDrillKey("delayed")} />
             <KpiCard label="Material at risk" value={kpis.data.material_at_risk}
               sub="orders affected"
               tone={kpis.data.material_at_risk > 2 ? "alert" : kpis.data.material_at_risk > 0 ? "warn" : "ok"}
+              tip="Orders whose material is late or at risk - procurement delays that can cascade into production."
               onClick={() => setDrillKey("material")} />
             <KpiCard label="Capacity conflicts" value={kpis.data.capacity_conflicts}
               sub="overloaded WC-days"
               tone={kpis.data.capacity_conflicts > 3 ? "alert" : kpis.data.capacity_conflicts > 0 ? "warn" : "ok"}
+              tip="Work-centre days where scheduled demand exceeds available minutes. Click to see the Capacity screen."
               onClick={() => nav("/capacity")} />
           </>
         )}
@@ -84,7 +82,7 @@ export function Dashboard() {
           {watch.isError && <ErrorState message="Couldn't load the watchlist." onRetry={() => watch.refetch()} />}
           {watch.data && watch.data.length === 0 && <div className="state">No orders yet.</div>}
           {watch.data && watch.data.length > 0 && (
-            <table>
+            <table className="roomy">
               <thead>
                 <tr>
                   <th>Order</th><th>Product</th><th>Customer</th><th className="num">Qty</th>
@@ -100,7 +98,7 @@ export function Dashboard() {
                     <td>{r.product_name}</td>
                     <td>{r.customer}</td>
                     <td className="num">{r.order_qty}</td>
-                    <td><Pill tone={statusTone(r.priority)}>{r.priority}</Pill></td>
+                    <td><PriorityPill priority={r.priority} /></td>
                     <td>{fmtDate(r.committed_delivery_date)}</td>
                     <td>{fmtDate(r.planned_delivery_dt)}</td>
                     <td><BufferBar hrs={r.buffer_hrs} /></td>
@@ -357,14 +355,16 @@ function Empty({ text }: { text: string }) {
   return <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>{text}</p>;
 }
 
-function KpiCard({ label, value, sub, tone, onClick }: {
+function KpiCard({ label, value, sub, tone, onClick, tip }: {
   label: string; value: React.ReactNode; sub?: string;
-  tone?: "ok" | "warn" | "alert"; onClick?: () => void;
+  tone?: "ok" | "warn" | "alert"; onClick?: () => void; tip?: string;
 }) {
+  const clickHint = onClick ? "Click for the orders behind this metric." : "";
+  const title = [tip, clickHint].filter(Boolean).join(" ") || undefined;
   return (
     <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}
          onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}
-         title={onClick ? "Click for the orders behind this metric" : undefined}>
+         title={title}>
       <div className="v">{value}</div>
       <div className="l">{label}</div>
       {sub && <div className="l" style={{ opacity: 0.6, fontSize: 11 }}>{sub}</div>}
