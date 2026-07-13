@@ -66,7 +66,12 @@ def persist(db: Session, si: SchedulingInput, result: ScheduleResult,
             planned_delivery_dt=delivery,
             prod_duration_mins=prod_end_min - prod_start_min,
             original_buffer_hrs=buffer_hrs, buffer_hrs=buffer_hrs,
-            schedule_status="feasible" if buffer_hrs >= 0 else "infeasible",
+            # A successfully-scheduled order always has a valid plan, so it is
+            # 'feasible'. Whether it is LATE is a separate dimension captured by
+            # buffer_hrs (negative = late) and surfaced as "Late" in the UI.
+            # 'infeasible' is reserved for orders the solver genuinely cannot
+            # schedule at all (which do not reach this writer path).
+            schedule_status="feasible",
             is_current=True, is_stale=False, stale_reason=None)
         db.add(sched)
         db.flush()  # get sched.id
