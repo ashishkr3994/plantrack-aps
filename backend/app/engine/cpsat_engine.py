@@ -95,7 +95,13 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8,
         horizon += sum(base_duration(op, o.qty) for op in o.ops)
     horizon += max((o.material_ready_min for o in si.orders), default=0)
     max_changeover = max(si.changeover_minutes.values(), default=0)
-    horizon = max(horizon, 1) + 1000 + max_changeover * 50
+    # account for downtime: a pause pushes work out, so the horizon must be
+    # large enough to place operations after the latest downtime window.
+    downtime_total = sum(max(0, int(e) - int(s))
+                         for (_wc, s, e, _pk) in getattr(si, "downtime_blocks", []))
+    latest_downtime_end = max((int(e) for (_wc, _s, e, _pk)
+                               in getattr(si, "downtime_blocks", [])), default=0)
+    horizon = max(horizon, 1) + 1000 + max_changeover * 50 + downtime_total + latest_downtime_end
 
     # presence/interval bookkeeping
     # op_key -> dict(start,end,dur,family, machines={wc: (present, interval)})
@@ -144,10 +150,38 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 8,
         model.AddMaxEquality(oe, end_vars)
         order_end[o.pk] = oe
 
+    # Downtime blockers: turn logged pause events into fixed unavailable
+    # windows the solver must schedule around.
+    #  - work-centre-wide (order_pk None): a fixed interval added to that
+    #    machine's interval set, so NO operation may overlap the outage.
+    #  - operational pause (order_pk set): only that order's operations on the
+    #    machine are forbidden from overlapping the pause window.
+    blockers_by_wc: dict[str, list] = collections.defaultdict(list)
+    for idx, (wc, s_min, e_min, order_pk) in enumerate(getattr(si, "downtime_blocks", [])):
+        if wc is None or e_min <= s_min:
+            continue
+        s = max(0, min(int(s_min), horizon))
+        e = max(0, min(int(e_min), horizon))
+        if e <= s:
+            continue
+        if order_pk is None:
+            # machine outage: fixed interval joins the machine's no-overlap set
+            blk = model.NewFixedSizeIntervalVar(s, e - s, f"dt_block_{idx}")
+            blockers_by_wc[wc].append(blk)
+        else:
+            # operational pause: the affected order's operation on this machine
+            # cannot run during the pause. Model it as an earliest-start push --
+            # the operation may not start until the pause window has cleared.
+            # (A push is always feasible; a hard before/after split can make the
+            # model infeasible when 'before' is impossible.)
+            for d in machine_ops.get(wc, []):
+                if d["key"][0] == order_pk:
+                    model.Add(d["start"] >= e)
+
     # capacity + sequencing per machine
     for wc, ops in machine_ops.items():
         cap = si.work_center_capacity.get(wc, 1)
-        intervals = [d["interval"] for d in ops]
+        intervals = [d["interval"] for d in ops] + blockers_by_wc.get(wc, [])
         if cap <= 1:
             model.AddNoOverlap(intervals)
             _add_sequence_setups(model, si, wc, ops, horizon)
