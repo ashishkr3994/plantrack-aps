@@ -109,6 +109,10 @@ class EventCreate(BaseModel):
     downtime_reason: Optional[str] = None
     downtime_mins: int = 0
     entered_by: Optional[str] = None
+    # For pause events: if True the downtime takes the whole work centre offline
+    # (affects ALL orders on that machine); if False (default) it is an
+    # operational pause affecting only this order's operation.
+    downtime_whole_wc: bool = False
 
 
 class EventRead(ORMModel):
