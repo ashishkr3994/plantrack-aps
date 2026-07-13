@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Pill } from "@/components/ui";
+import { Pill, Loading, ErrorState } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 import { downloadCSV, downloadRawCSV, MASTER_TEMPLATES } from "@/lib/csv";
-import type { ImportResultT } from "@/api/types";
+import type { ImportResultT, LeadTimeRow } from "@/api/types";
 
 type Entity = "calendar" | "lead_times" | "routings";
 
@@ -41,7 +42,7 @@ export function MasterData() {
     setError(null);
     try {
       const rows = await EXPORTERS[entity]();
-      if (rows.length === 0) { setError("Nothing to export — this table is empty."); return; }
+      if (rows.length === 0) { setError("Nothing to export - this table is empty."); return; }
       downloadCSV(`${entity}_export.csv`, rows);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Export failed.");
@@ -73,9 +74,11 @@ export function MasterData() {
   return (
     <div className="stack">
       <h2>Master data</h2>
+
+      <LeadTimesEditor />
       <p className="muted" style={{ margin: 0 }}>
         Download the current plant calendar, lead-time master, and routing & operations,
-        grab a blank template, or import updated data — all in one place.
+        grab a blank template, or import updated data - all in one place.
       </p>
 
       {!canImport && <div className="banner err">Importing requires the planner role. You can still download data and templates.</div>}
@@ -112,13 +115,13 @@ export function MasterData() {
           <div className="bd stack">
             <input type="file" accept=".csv,text/csv" disabled={!canImport}
               onChange={(e) => onFile(e.target.files?.[0])} />
-            <textarea rows={6} placeholder={`Paste ${meta.label} CSV here…`} value={text}
+            <textarea rows={6} placeholder={`Paste ${meta.label} CSV here...`} value={text}
               disabled={!canImport} onChange={(e) => setText(e.target.value)}
               style={{ width: "100%", fontFamily: "var(--mono)", fontSize: 12.5, padding: 10,
                        border: "1px solid var(--line)", borderRadius: "var(--r-sm)", resize: "vertical" }} />
             <div className="row" style={{ gap: 8 }}>
               <button className="ghost" onClick={() => setText(MASTER_TEMPLATES[entity])} disabled={!canImport}>Insert template</button>
-              <button className="primary" onClick={doImport} disabled={!canImport || busy}>{busy ? "Importing…" : "Import"}</button>
+              <button className="primary" onClick={doImport} disabled={!canImport || busy}>{busy ? "Importing..." : "Import"}</button>
             </div>
           </div>
         </section>
@@ -131,7 +134,7 @@ export function MasterData() {
           {result.errors.length > 0 && (
             <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
               {result.errors.slice(0, 10).map((e, i) => <li key={i} style={{ fontSize: 12.5 }}>{e}</li>)}
-              {result.errors.length > 10 && <li style={{ fontSize: 12.5 }}>…and {result.errors.length - 10} more</li>}
+              {result.errors.length > 10 && <li style={{ fontSize: 12.5 }}>...and {result.errors.length - 10} more</li>}
             </ul>
           )}
         </div>
@@ -149,5 +152,92 @@ export function MasterData() {
         </div>
       </section>
     </div>
+  );
+}
+
+function LeadTimesEditor() {
+  const { hasRole } = useAuth();
+  const canEdit = hasRole("planner");
+  const qc = useQueryClient();
+  const toast = useToast();
+  const rows = useQuery({ queryKey: ["lead-times"], queryFn: api.leadTimes });
+  const [draft, setDraft] = useState<Record<string, LeadTimeRow>>({});
+  const [savingFamily, setSavingFamily] = useState<string | null>(null);
+
+  const rowFor = (r: LeadTimeRow): LeadTimeRow => draft[r.product_family] ?? r;
+  const setField = (family: string, base: LeadTimeRow, key: keyof LeadTimeRow, value: number) =>
+    setDraft((d) => ({ ...d, [family]: { ...(d[family] ?? base), [key]: value } }));
+  const leadOf = (r: LeadTimeRow) =>
+    Number(r.packing_days || 0) + Number(r.transport_days || 0) + Number(r.buffer_days || 0);
+
+  const save = async (family: string, base: LeadTimeRow) => {
+    const row = draft[family] ?? base;
+    setSavingFamily(family);
+    try {
+      const res = await api.updateLeadTime(family, row);
+      toast.success(`${family} lead time saved (${res.delivery_lead_days} days). Re-solve to apply.`);
+      setDraft((d) => { const n = { ...d }; delete n[family]; return n; });
+      qc.invalidateQueries({ queryKey: ["lead-times"] });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save lead time.");
+    } finally {
+      setSavingFamily(null);
+    }
+  };
+
+  return (
+    <section className="card">
+      <div className="hd">Delivery lead times (per product family)</div>
+      <div className="bd stack">
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          The scheduler targets production finishing early enough that delivery
+          (packing + transport + buffer days) lands by the committed date. Edit
+          a family's days below, then re-run the optimiser to apply.
+        </p>
+        {rows.isLoading && <Loading />}
+        {rows.isError && <ErrorState message="Couldn't load lead times." onRetry={() => rows.refetch()} />}
+        {rows.data && rows.data.length > 0 && (
+          <table className="roomy">
+            <thead>
+              <tr>
+                <th>Family</th><th className="num">Inbound</th><th className="num">QA</th>
+                <th className="num">Packing</th><th className="num">Transport</th>
+                <th className="num">Buffer</th><th className="num">Delivery lead</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.data.map((base) => {
+                const r = rowFor(base);
+                const dirty = !!draft[base.product_family];
+                const num = (key: keyof LeadTimeRow) => (
+                  <input type="number" min={0} step={1} disabled={!canEdit} style={{ width: 64 }}
+                    value={Number(r[key] ?? 0)}
+                    onChange={(e) => setField(base.product_family, base, key, Number(e.target.value))} />
+                );
+                return (
+                  <tr key={base.product_family}>
+                    <td style={{ fontWeight: 600 }}>{base.product_family}</td>
+                    <td className="num">{num("inbound_days")}</td>
+                    <td className="num">{num("qa_days")}</td>
+                    <td className="num">{num("packing_days")}</td>
+                    <td className="num">{num("transport_days")}</td>
+                    <td className="num">{num("buffer_days")}</td>
+                    <td className="num" style={{ fontWeight: 600 }}>{leadOf(r)} days</td>
+                    <td>
+                      {canEdit && (
+                        <button className="primary" disabled={!dirty || savingFamily === base.product_family}
+                          onClick={() => save(base.product_family, base)}>
+                          {savingFamily === base.product_family ? "Saving..." : "Save"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
   );
 }
