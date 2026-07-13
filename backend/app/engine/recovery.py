@@ -1,4 +1,4 @@
-"""Single-order recovery — a targeted reschedule of ONE order, not a full re-solve.
+"""Single-order recovery - a targeted reschedule of ONE order, not a full re-solve.
 
 Ported from the prototype's rescheduleOrder. A planner picks an order in trouble
 and applies recovery levers:
@@ -46,7 +46,7 @@ def _current_delivery(db: Session, order_pk: int):
 def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
                   performed_by: str | None = None, dry_run: bool = False) -> dict:
     """Compute a single-order recovery. When dry_run=True, nothing is persisted
-    or logged — the solve runs and the projected outcome is returned, then all
+    or logged - the solve runs and the projected outcome is returned, then all
     session changes are rolled back. Used to preview/recommend before a planner
     commits to a recovery."""
     order = db.query(models.OrderHeader).filter_by(order_id=order_id).first()
@@ -58,7 +58,7 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
     # Apply overtime as extra minutes/day. A windowed overtime can't be expressed
     # in the flat working-minute model without calendar surgery, so we apply the
     # uplift globally for this targeted solve and record the requested window in
-    # the log (transparent about the approximation — see ADR).
+    # the log (transparent about the approximation - see ADR).
     minutes_per_day = 600
     if opts.overtime:
         minutes_per_day += max(0, int(opts.overtime_hrs)) * 60
@@ -124,6 +124,14 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
     # bump replan count
     if hasattr(order, "replan_count"):
         order.replan_count = (order.replan_count or 0) + 1
+    # Auto-refresh derived state after a real recovery so Delayed/Critical and
+    # the dashboard reflect the recovered plan immediately (dry runs rolled back
+    # above and must not rescan).
+    if not dry_run:
+        from .capacity import compute_capacity_load
+        from .deviation import run_deviation_engine
+        compute_capacity_load(db)
+        run_deviation_engine(db)
     db.commit()
 
     sched_order = next((o for o in result.orders if o.order_id == order_id), None)
@@ -142,7 +150,7 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
 
 def recommend_recovery(db: Session, order_id: str, time_budget_s: int = 8) -> dict:
     """Try a small set of overtime levels (read-only, dry-run) and suggest the
-    smallest one that clears the order's lateness — or the best achievable if
+    smallest one that clears the order's lateness - or the best achievable if
     none fully clears it. Returns a human-readable recommendation."""
     candidates = [0, 2, 4, 6, 8]
     best = None
@@ -178,7 +186,7 @@ def recommend_recovery(db: Session, order_id: str, time_budget_s: int = 8) -> di
     recovered_h = round(base_late_h - best_late_h, 1)
     hrs = best["overtime_hrs_tried"]
 
-    # the bottleneck field is a full sentence like "Late 12.0h — limited by
+    # the bottleneck field is a full sentence like "Late 12.0h - limited by
     # Assembly (busiest machine on its route)"; extract just the machine name
     # for clean phrasing, falling back to the raw text if the shape changes.
     raw_bottleneck = best.get("bottleneck") or baseline.get("bottleneck") or ""
@@ -187,10 +195,10 @@ def recommend_recovery(db: Session, order_id: str, time_budget_s: int = 8) -> di
         machine = raw_bottleneck.split("limited by", 1)[1].split("(")[0].strip()
 
     if hrs == 0 and best.get("on_time"):
-        text_out = "No overtime needed — the order is already on plan without recovery."
+        text_out = "No overtime needed - the order is already on plan without recovery."
     elif recovered_h <= 0:
         where = f"the {machine} work centre" if machine else "a machine bottleneck"
-        text_out = (f"Overtime alone doesn't recover this order — it stayed {base_late_h}h late "
+        text_out = (f"Overtime alone doesn't recover this order - it stayed {base_late_h}h late "
                     f"even with up to 8h/day tried. The delay is likely bound by something "
                     f"overtime can't fix in isolation (e.g. material readiness or {where} "
                     f"contention from other orders); consider reducing quantity, expediting "
@@ -198,7 +206,7 @@ def recommend_recovery(db: Session, order_id: str, time_budget_s: int = 8) -> di
     elif best.get("on_time"):
         where = f" on {machine}" if machine else ""
         text_out = (f"Recovery with +{hrs}h/day overtime{where} brings this order back on time "
-                    f"(recovers {recovered_h}h — about {round(recovered_h/24,1)} days).")
+                    f"(recovers {recovered_h}h - about {round(recovered_h/24,1)} days).")
     else:
         where = f" on {machine}" if machine else ""
         text_out = (f"Recovery with +{hrs}h/day overtime{where} recovers {recovered_h}h, "
