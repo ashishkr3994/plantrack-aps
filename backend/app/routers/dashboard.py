@@ -25,6 +25,14 @@ def capacity_conflicts(db: Session = Depends(get_db)):
     return _rows(db, "SELECT * FROM v_capacity_conflicts")
 
 
+@router.get("/bottleneck-recommendations")
+def bottleneck_recommendations(db: Session = Depends(get_db)):
+    """Work centres that are structural bottlenecks, with a recommendation to
+    add capacity (e.g. a second station). Analysis only; changes no schedule."""
+    from ..engine.capacity import bottleneck_recommendations as _recs
+    return _recs(db)
+
+
 @router.get("/open-alerts")
 def open_alerts(db: Session = Depends(get_db)):
     return _rows(db, "SELECT * FROM v_open_alerts")
