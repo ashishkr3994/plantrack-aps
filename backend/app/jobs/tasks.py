@@ -1,3 +1,4 @@
+
 """Async scheduling task. Kicks off a CP-SAT solve, time-boxed, and persists the
 result. Updates the solve_job row through its lifecycle so the API can poll.
 """
@@ -48,6 +49,14 @@ def solve_schedule(job_id: str, mode: str = "forward", time_budget_s: int = 30,
 
         if result.feasible:
             persist(db, si, result, mode=mode)
+            # Auto-refresh derived state so the dashboard/Delayed-Critical view
+            # reflects THIS solve immediately -- no manual "Check for deviations"
+            # step. (Solving invalidates any prior scan, so we recompute here.)
+            from ..engine.capacity import compute_capacity_load
+            from ..engine.deviation import run_deviation_engine
+            compute_capacity_load(db)
+            run_deviation_engine(db)
+            db.commit()
 
         job = db.query(models.SolveJob).filter_by(job_id=job_id).first()
         if job:
