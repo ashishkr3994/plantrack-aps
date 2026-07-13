@@ -40,7 +40,15 @@ def create_event(payload: schemas.EventCreate,
     if db.query(models.ActualEvent).filter_by(event_id=payload.event_id).first():
         raise HTTPException(409, f"event_id {payload.event_id} already exists")
 
-    obj = models.ActualEvent(**payload.model_dump())
+    data = payload.model_dump()
+    whole_wc = data.pop("downtime_whole_wc", False)
+    # Encode work-centre-wide scope as a '[WC]' prefix on the reason text, which
+    # the solver-loader decodes (avoids a schema migration for one flag).
+    if payload.event_type == "pause" and whole_wc:
+        reason = data.get("downtime_reason") or "Downtime"
+        if not reason.startswith("[WC]"):
+            data["downtime_reason"] = f"[WC] {reason}"
+    obj = models.ActualEvent(**data)
     db.add(obj)
     db.commit()
     db.refresh(obj)
