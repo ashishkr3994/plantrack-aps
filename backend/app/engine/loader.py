@@ -68,6 +68,11 @@ class SchedulingInput:
     # Optional warm start: {(order_pk, operation_seq): start_minute} from the
     # current schedule, fed to the solver as hints so re-solves stay stable.
     warm_start: dict[tuple, int] = field(default_factory=dict)
+    # Downtime blocks fed to the solver from logged pause events. Each is
+    # (work_center, start_min, end_min, order_pk). If order_pk is None the block
+    # is work-centre-wide (machine outage -> affects ALL orders on that machine);
+    # if set, it applies only to that order's operation (operational pause).
+    downtime_blocks: list[tuple] = field(default_factory=list)
 
 
 def load_scheduling_input(db: Session, minutes_per_day: int = 600,
@@ -170,6 +175,35 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             warm[(oo.order_id, oo.operation_seq)] = max(
                 0, cal.working_minutes_between(origin, start_dt))
 
+    # downtime blocks from logged pause events -> real solver constraints.
+    # An operational pause (default) blocks only the affected order's operation;
+    # a work-centre-wide pause (reason tagged '[WC]') blocks the whole machine
+    # for that window so ALL orders on it are scheduled around the outage.
+    downtime_blocks: list[tuple] = []
+    order_route = {o.pk: o.route_id for o in orders}
+    for ev in db.query(models.ActualEvent).filter(
+            models.ActualEvent.event_type == "pause").all():
+        mins = int(ev.downtime_mins or 0)
+        if mins <= 0 or ev.order_id is None:
+            continue
+        ev_ts = ev.event_timestamp
+        if ev_ts.tzinfo is None:
+            ev_ts = ev_ts.replace(tzinfo=timezone.utc)
+        start_min = max(0, cal.working_minutes_between(origin, ev_ts))
+        end_min = start_min + mins
+        # which work centre? the affected operation's work centre on the route.
+        rid = order_route.get(ev.order_id)
+        wc = None
+        if rid and ev.operation_seq is not None:
+            for op in routes.get(rid, []):
+                if op.seq == ev.operation_seq:
+                    wc = op.work_center
+                    break
+        wc_wide = bool(ev.downtime_reason and ev.downtime_reason.startswith("[WC]"))
+        downtime_blocks.append((wc, start_min, end_min,
+                                None if wc_wide else ev.order_id))
+
     return SchedulingInput(origin=origin, calendar=cal, orders=orders,
                            work_center_capacity=wc_caps,
-                           changeover_minutes=changeover, warm_start=warm)
+                           changeover_minutes=changeover, warm_start=warm,
+                           downtime_blocks=downtime_blocks)
