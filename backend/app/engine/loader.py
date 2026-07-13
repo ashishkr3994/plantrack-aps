@@ -53,6 +53,12 @@ class OrderInput:
     material_ready_min: int    # earliest start, working-minutes from origin
     committed_due_dt: datetime
     ops: list[OpInput] = field(default_factory=list)
+    # per-family delivery lead (days) between production end and customer
+    # delivery, so the writer computes delivery consistently with the loader.
+    # Placed after ops (which has a default) so existing positional construction
+    # -- OrderInput(id, pk, route, qty, prio, due, ready, due_dt, [ops]) -- and
+    # callers that pass ops positionally keep working; loader sets it by keyword.
+    delivery_lead_days: int = 4
 
 
 @dataclass
@@ -112,6 +118,18 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
     # product pk -> route_id
     prod_route = {p.id: (p.routing.route_id if p.routing_id and p.routing else None)
                   for p in db.query(models.Product).all()}
+    # product pk -> family (to look up per-family lead times)
+    prod_family = {p.id: p.family for p in db.query(models.Product).all()}
+
+    # per-family delivery lead (days) = packing + transport + buffer, i.e. the
+    # post-production logistics between production end and customer delivery.
+    # Read from lead_time_master so lead varies by product family (e.g. pressure
+    # vessels need more than structural steel). Families with no row fall back
+    # to the default constant, so behaviour is unchanged where unconfigured.
+    family_lead: dict[str, int] = {}
+    for lt in db.query(models.LeadTimeMaster).all():
+        family_lead[lt.product_family] = int(
+            (lt.packing_days or 0) + (lt.transport_days or 0) + (lt.buffer_days or 0))
 
     # material status: order pk -> earliest ready datetime (expected/actual/planned)
     matstat = {m.order_id: m for m in db.query(models.MaterialStatus).all()}
@@ -136,18 +154,20 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
         material_ready_min = max(0, cal.working_minutes_between(origin, ready_dt))
 
         # committed due offset. The committed date is the customer DELIVERY
-        # deadline; production must finish DELIVERY_LEAD_DAYS earlier so that
-        # delivery (prod_end + pack + dispatch + transport) still lands by the
-        # committed date. So the solver's production due target is the
-        # committed date minus the delivery lead.
+        # deadline; production must finish the delivery lead earlier so that
+        # delivery (prod_end + packing + transport + buffer) still lands by the
+        # committed date. The lead is per-family (from lead_time_master), so the
+        # solver's production due target = committed date minus that lead.
+        lead_days = family_lead.get(prod_family.get(o.product_id), DELIVERY_LEAD_DAYS)
         delivery_due_dt = datetime.combine(o.committed_delivery_date, datetime.min.time(), tzinfo=timezone.utc)
-        prod_due_dt = delivery_due_dt - timedelta(days=DELIVERY_LEAD_DAYS)
+        prod_due_dt = delivery_due_dt - timedelta(days=lead_days)
         committed_due_min = max(0, cal.working_minutes_between(origin, prod_due_dt))
 
         orders.append(OrderInput(
             order_id=o.order_id, pk=o.id, route_id=route_id, qty=int(o.order_qty),
             priority=str(o.priority), committed_due_min=committed_due_min,
             material_ready_min=material_ready_min, committed_due_dt=delivery_due_dt,
+            delivery_lead_days=lead_days,
             ops=routes[route_id],
         ))
 
