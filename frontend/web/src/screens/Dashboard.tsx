@@ -105,7 +105,11 @@ export function Dashboard() {
                     <td>{fmtDate(r.planned_delivery_dt)}</td>
                     <td><BufferBar hrs={r.buffer_hrs} /></td>
                     <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
-                    <td>{r.schedule_status ? <Pill tone={statusTone(r.schedule_status)}>{r.schedule_status}</Pill> : <span className="muted">not scheduled</span>}</td>
+                    <td>{r.schedule_status
+                      ? (Number(r.buffer_hrs) < 0
+                          ? <Pill tone="risk">Late</Pill>
+                          : <Pill tone="ok">On track</Pill>)
+                      : <span className="muted">not scheduled</span>}</td>
                   </tr>
                 ))}
               </tbody>
