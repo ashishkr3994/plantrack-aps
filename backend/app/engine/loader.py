@@ -20,7 +20,8 @@ from .calendar import WorkingCalendar
 PACK_DAYS = 1
 DISPATCH_DAYS = 1
 TRANSPORT_DAYS = 2
-DELIVERY_LEAD_DAYS = PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS  # = 4
+# total default delivery lead = 4 days
+DELIVERY_LEAD_DAYS = PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS
 
 
 @dataclass
