@@ -2,16 +2,17 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Loading, ErrorState, Pill, Modal, statusTone } from "@/components/ui";
+import { Loading, ErrorState, Pill, Modal, PriorityPill } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 import type { DelayedOrderRow, RecommendationResult } from "@/api/types";
 
 function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
+  if (!s) return "-";
   const d = new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 function fmtDT(s: string | null | undefined): string {
-  if (!s) return "—";
+  if (!s) return "-";
   const d = new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -31,7 +32,7 @@ export function DelayedOrders() {
       <section className="card">
         <div className="hd">
           Open deviations
-          {q.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing…</span>}
+          {q.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing...</span>}
         </div>
         <div className="bd" style={{ padding: 0 }}>
           {q.isLoading && <Loading />}
@@ -49,12 +50,12 @@ export function DelayedOrders() {
                   <tr key={i} style={{ cursor: "pointer" }} onClick={() => setOpen(row)} title="See why and get a recommendation">
                     <td className="mono">{row.order_id}</td>
                     <td>{row.customer}</td>
-                    <td><Pill tone={statusTone(row.priority)}>{row.priority}</Pill></td>
+                    <td><PriorityPill priority={row.priority} /></td>
                     <td><Pill tone={row.severity === "Critical" ? "risk" : "warn"}>{row.severity}</Pill></td>
                     <td>{row.milestone_name}</td>
-                    <td className="muted" style={{ fontSize: 12.5 }}>{row.root_cause_code ?? "—"}</td>
-                    <td className="num">{row.deviation_minutes ? `${Math.round(row.deviation_minutes)}m` : "—"}</td>
-                    <td style={{ color: "var(--teal)", fontSize: 12 }}>details →</td>
+                    <td className="muted" style={{ fontSize: 12.5 }}>{row.root_cause_code ?? "-"}</td>
+                    <td className="num">{row.deviation_minutes ? `${Math.round(row.deviation_minutes)}m` : "-"}</td>
+                    <td style={{ color: "var(--teal)", fontSize: 12 }}>details </td>
                   </tr>
                 ))}
               </tbody>
@@ -79,6 +80,7 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
   });
 
   const [overtimeHrs, setOvertimeHrs] = useState(4);
+  const toast = useToast();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [mode, setMode] = useState("forward");
@@ -103,14 +105,19 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
       });
       if (!res.feasible) {
         setApplyError(res.message ?? "No feasible recovery with these options.");
+        toast.error(`No feasible recovery for ${row.order_id} with these options.`);
       } else {
         setApplied({ newDelivery: res.new_delivery ?? null, onTime: res.on_time ?? null });
         qc.invalidateQueries({ queryKey: ["delayed-orders"] });
         qc.invalidateQueries({ queryKey: ["kpis"] });
         qc.invalidateQueries({ queryKey: ["watchlist"] });
+        toast.success(res.on_time
+          ? `${row.order_id} recovered - now on time.`
+          : `${row.order_id} rescheduled - recovery applied.`);
       }
     } catch (e) {
       setApplyError(e instanceof ApiError ? e.message : "Recovery failed.");
+      toast.error("Recovery failed.");
     } finally {
       setApplying(false);
     }
@@ -124,18 +131,18 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
           <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--teal)", marginBottom: 6 }}>Order & status</div>
           <table><tbody>
             <tr><td className="muted" style={{ width: "40%" }}>Customer</td><td>{row.customer}</td></tr>
-            <tr><td className="muted">Priority</td><td><Pill tone={statusTone(row.priority)}>{row.priority}</Pill></td></tr>
+            <tr><td className="muted">Priority</td><td><PriorityPill priority={row.priority} /></td></tr>
             <tr><td className="muted">Committed delivery</td><td>{fmtDate(row.committed_delivery_date)}</td></tr>
             <tr><td className="muted">Milestone affected</td><td>{row.milestone_name}</td></tr>
-            <tr><td className="muted">Root cause</td><td>{row.root_cause_code ?? "—"}</td></tr>
-            <tr><td className="muted">Deviation</td><td>{row.deviation_minutes ? `${Math.round(row.deviation_minutes)} min` : "—"}</td></tr>
+            <tr><td className="muted">Root cause</td><td>{row.root_cause_code ?? "-"}</td></tr>
+            <tr><td className="muted">Deviation</td><td>{row.deviation_minutes ? `${Math.round(row.deviation_minutes)} min` : "-"}</td></tr>
             <tr><td className="muted">Detected</td><td>{fmtDT(row.generated_at)}</td></tr>
           </tbody></table>
         </div>
 
         <div>
           <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--teal)", marginBottom: 6 }}>Recommended action</div>
-          {rec.isLoading && <Loading label="Computing recommendation…" />}
+          {rec.isLoading && <Loading label="Computing recommendation..." />}
           {rec.isError && <div className="banner err">Couldn't compute a recommendation.</div>}
           {rd && (
             <div className={`banner ${rd.projected_on_time ? "ok" : rd.feasible ? "warn" : "err"}`}>
@@ -143,7 +150,7 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
               {rd.feasible && rd.recommended_overtime_hrs != null && rd.recommended_overtime_hrs > 0 && (
                 <div style={{ marginTop: 8 }}>
                   <button className="ghost" onClick={applyRecommended}>
-                    Use recommended {rd.recommended_overtime_hrs}h/day →
+                    Use recommended {rd.recommended_overtime_hrs}h/day 
                   </button>
                 </div>
               )}
@@ -176,7 +183,7 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
               </select>
             </div>
             <button className="primary" onClick={apply} disabled={!canAct || applying}>
-              {applying ? "Applying…" : "Apply recovery"}
+              {applying ? "Applying..." : "Apply recovery"}
             </button>
           </div>
           <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
@@ -187,7 +194,7 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
           {applied && (
             <div className="banner ok">
               Recovery applied. New delivery: <strong>{fmtDate(applied.newDelivery)}</strong>
-              {" "}— {applied.onTime ? "now on time." : "still late; consider a different lever."}
+              {" "}- {applied.onTime ? "now on time." : "still late; consider a different lever."}
             </div>
           )}
         </div>
