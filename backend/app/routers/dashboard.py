@@ -64,6 +64,10 @@ def kpis(db: Session = Depends(get_db)):
     out["products"] = db.execute(text("SELECT count(*) FROM product")).scalar() or 0
     out["open_alerts"] = db.execute(
         text("SELECT count(*) FROM alert_log WHERE status='open'")).scalar() or 0
+    # when the schedule state (capacity/deviation) was last recomputed -- lets
+    # the UI show "schedule last updated N min ago" and avoid stale-view confusion
+    out["last_updated"] = db.execute(
+        text("SELECT MAX(computed_at) FROM capacity_load")).scalar()
     return out
 
 
