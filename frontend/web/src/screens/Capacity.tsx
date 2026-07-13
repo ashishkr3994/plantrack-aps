@@ -4,13 +4,13 @@ import { api } from "@/api/client";
 import { Loading, ErrorState, Empty, Modal, Pill } from "@/components/ui";
 
 function fmtDate(s: unknown): string {
-  if (!s || typeof s !== "string") return "—";
+  if (!s || typeof s !== "string") return "-";
   const d = new Date(s);
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 function fmtDT(s: unknown): string {
-  if (!s || typeof s !== "string") return "—";
+  if (!s || typeof s !== "string") return "-";
   const d = new Date(s);
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
@@ -19,11 +19,23 @@ function fmtDT(s: unknown): string {
 
 export function Capacity() {
   const conflicts = useQuery({ queryKey: ["capacity-conflicts"], queryFn: api.capacityConflicts });
+  const bottlenecks = useQuery({ queryKey: ["bottlenecks"], queryFn: api.bottleneckRecommendations });
   const [cell, setCell] = useState<{ wc: string; date: string } | null>(null);
 
   return (
     <div className="stack">
       <h2>Capacity</h2>
+
+      {bottlenecks.data && bottlenecks.data.length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
+          {bottlenecks.data.map((b) => (
+            <div key={b.work_center} className="bottleneck-banner">
+              <span className="bb-icon" aria-hidden="true">&#9888;</span>
+              <span className="bb-text">{b.recommendation}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <CapacityHeatmapPanel onCell={(wc, date) => setCell({ wc, date })} />
 
@@ -68,7 +80,7 @@ function CapacityHeatmapPanel({ onCell }: { onCell: (wc: string, date: string) =
   if (q.isLoading) return <section className="card"><div className="hd">Capacity heatmap</div><div className="bd"><Loading /></div></section>;
   const data = q.data;
   if (!data || data.grid.length === 0) return (
-    <section className="card"><div className="hd">Capacity heatmap</div><div className="state">No capacity data yet — run the optimiser to populate it.</div></section>
+    <section className="card"><div className="hd">Capacity heatmap</div><div className="state">No capacity data yet - run the optimiser to populate it.</div></section>
   );
   const heatColor = (v: number | null) => {
     if (v == null) return "var(--canvas)";
@@ -79,7 +91,7 @@ function CapacityHeatmapPanel({ onCell }: { onCell: (wc: string, date: string) =
   };
   return (
     <section className="card">
-      <div className="hd">Capacity heatmap — load % by work centre & day (click a cell)</div>
+      <div className="hd">Capacity heatmap - load % by work centre & day (click a cell)</div>
       <div className="bd" style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 2 }}>
           <thead>
@@ -95,7 +107,7 @@ function CapacityHeatmapPanel({ onCell }: { onCell: (wc: string, date: string) =
                 {row.cells.map((c) => (
                   <td key={c.date}
                       onClick={() => c.load_pct != null && onCell(row.work_center, c.date)}
-                      title={`${row.work_center} · ${fmtDate(c.date)} · ${c.load_pct == null ? "no load" : c.load_pct + "%"} — click for detail`}
+                      title={`${row.work_center} - ${fmtDate(c.date)} - ${c.load_pct == null ? "no load" : c.load_pct + "%"} - click for detail`}
                       style={{ background: heatColor(c.load_pct), textAlign: "center", fontSize: 10.5, minWidth: 44,
                                color: (c.load_pct ?? 0) >= 85 ? "#fff" : "var(--ink)", borderRadius: 3, border: "none",
                                cursor: c.load_pct != null ? "pointer" : "default",
@@ -109,9 +121,9 @@ function CapacityHeatmapPanel({ onCell }: { onCell: (wc: string, date: string) =
         </table>
         <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-2)", flexWrap: "wrap" }}>
           <Legend color="rgba(34,124,78,0.30)" label="< 60%" />
-          <Legend color="rgba(180,105,14,0.35)" label="60–85%" />
-          <Legend color="rgba(180,105,14,0.75)" label="85–100%" />
-          <Legend color="rgba(180,35,24,0.85)" label="≥ 100% (overloaded)" />
+          <Legend color="rgba(180,105,14,0.35)" label="60-85%" />
+          <Legend color="rgba(180,105,14,0.75)" label="85-100%" />
+          <Legend color="rgba(180,35,24,0.85)" label=" 100% (overloaded)" />
         </div>
       </div>
     </section>
@@ -128,13 +140,13 @@ function CellDrillDown({ wc, date, onClose }: { wc: string; date: string; onClos
   const q = useQuery({ queryKey: ["capacity-cell", wc, date], queryFn: () => api.capacityCell(wc, date) });
   const d = q.data;
   return (
-    <Modal title={`${wc} — ${fmtDate(date)}`} onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
-      {q.isLoading && <Loading label="Loading cell detail…" />}
+    <Modal title={`${wc} - ${fmtDate(date)}`} onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
+      {q.isLoading && <Loading label="Loading cell detail..." />}
       {d && (
         <div className="stack">
           {d.load && (
             <div className="banner info">
-              Load <strong>{d.load.load_pct}%</strong> — {d.load.demand_min} of {d.load.available_min} available minutes
+              Load <strong>{d.load.load_pct}%</strong> - {d.load.demand_min} of {d.load.available_min} available minutes
               {d.load.overloaded && <Pill tone="risk">overloaded</Pill>}
             </div>
           )}
@@ -154,14 +166,14 @@ function CellDrillDown({ wc, date, onClose }: { wc: string; date: string; onClos
                     <td><Pill tone={op.priority === "HIGH" ? "risk" : op.priority === "MED" ? "warn" : "muted"}>{op.priority}</Pill></td>
                     <td className="num">{op.operation_seq}</td>
                     <td className="num">{Math.round(op.duration_mins)}</td>
-                    <td style={{ fontSize: 12 }}>{fmtDT(op.planned_start)} → {fmtDT(op.planned_end)}</td>
+                    <td style={{ fontSize: 12 }}>{fmtDT(op.planned_start)}  {fmtDT(op.planned_end)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
           <p className="muted" style={{ fontSize: 12 }}>
-            To relieve this cell, use Reschedule → single-order recovery (add overtime or shift a partial quantity).
+            To relieve this cell, use Reschedule  single-order recovery (add overtime or shift a partial quantity).
           </p>
         </div>
       )}
