@@ -153,7 +153,7 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 1,
 
             tasks[(o.pk, op.seq)] = dict(
                 op=op, start=start, end=end, dur=dur, machines=machines,
-                eligible=eligible)
+                eligible=eligible, fixed=(done_end is not None))
             seq_to_end[op.seq] = end
             end_vars.append(end)
 
@@ -253,17 +253,24 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 1,
     else:  # 'off' -> legacy
         model.Minimize(sum(tardiness_terms) * 1000 + makespan)
 
-    # warm start: hint each op's start so re-solves stay close to the prior plan
+    # warm start: hint each op's start so re-solves stay close to the prior plan.
+    # Skip fixed ops (completed via completed_ops): their start/end are
+    # constants, not decision variables, and hinting a constant creates a
+    # duplicate-variable hint, which CP-SAT rejects as an invalid model. De-dup
+    # hint variables defensively as well.
     if si.warm_start:
-        hint_vars = []
-        hint_vals = []
+        seen_vars = set()
         for (pk, seq), t in tasks.items():
+            if t.get("fixed"):
+                continue
             hint = si.warm_start.get((pk, seq))
             if hint is not None:
-                hint_vars.append(t["start"])
-                hint_vals.append(int(hint))
-        for v, val in zip(hint_vars, hint_vals):
-            model.AddHint(v, val)
+                v = t["start"]
+                vid = v.Index() if hasattr(v, "Index") else id(v)
+                if vid in seen_vars:
+                    continue
+                seen_vars.add(vid)
+                model.AddHint(v, int(hint))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max_seconds
