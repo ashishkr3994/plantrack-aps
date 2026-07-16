@@ -196,4 +196,3 @@ def reschedule_log(order_id: str, db: Session = Depends(get_db)):
         "performed_by": r.performed_by,
         "performed_at": r.performed_at.isoformat() if r.performed_at else None,
     } for r in rows]
-
