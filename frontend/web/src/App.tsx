@@ -8,6 +8,7 @@ import { Login } from "./screens/Login";
 import { Dashboard } from "./screens/Dashboard";
 import { Orders } from "./screens/Orders";
 import { Schedule } from "./screens/Schedule";
+import { Timeline } from "./screens/Timeline";
 import { Capacity } from "./screens/Capacity";
 import { Materials } from "./screens/Materials";
 import { Reschedule } from "./screens/Reschedule";
@@ -27,6 +28,7 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: "/alerts", label: "Alerts" },
   { to: "/orders", label: "Orders" },
   { to: "/schedule", label: "Schedule" },
+  { to: "/timeline", label: "Timeline" },
   { to: "/capacity", label: "Capacity" },
   { to: "/materials", label: "Materials & BOM" },
   { to: "/reschedule", label: "Reschedule" },
@@ -43,7 +45,7 @@ const NAV: Array<{ to: string; label: string }> = [
 function LiveBadge() {
   const { status } = useLiveUpdates();
   const tone = status === "live" ? "ok" : status === "connecting" ? "warn" : "muted";
-  const label = status === "live" ? "Live" : status === "connecting" ? "Connecting…" : "Offline";
+  const label = status === "live" ? "Live" : status === "connecting" ? "Connecting..." : "Offline";
   return <span className={`pill ${tone}`} title="Live update connection">{label}</span>;
 }
 
@@ -76,7 +78,7 @@ function ThemeToggle() {
   return (
     <button className="ghost icon-btn" title={dark ? "Switch to light mode" : "Switch to dark mode"}
       onClick={() => setDark((d) => !d)}>
-      {dark ? "☀" : "☾"}
+      {dark ? "" : ""}
     </button>
   );
 }
@@ -93,7 +95,7 @@ function ProfileMenu() {
       <button className="avatar-btn" onClick={() => setOpen((o) => !o)} title="Account">
         <span className="avatar">{initials}</span>
         <span className="avatar-name">{user.username}</span>
-        <span className="avatar-caret">▾</span>
+        <span className="avatar-caret"></span>
       </button>
       {open && (
         <>
@@ -175,7 +177,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       done ? <button className="primary" onClick={onClose}>Done</button> : (
         <>
           <button onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="primary" onClick={submit} disabled={busy}>{busy ? "Saving…" : "Update password"}</button>
+          <button className="primary" onClick={submit} disabled={busy}>{busy ? "Saving..." : "Update password"}</button>
         </>
       )
     }>
@@ -238,6 +240,7 @@ export function App() {
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/schedule" element={<Schedule />} />
+            <Route path="/timeline" element={<Timeline />} />
             <Route path="/capacity" element={<Capacity />} />
             <Route path="/materials" element={<Materials />} />
             <Route path="/reschedule" element={<Reschedule />} />
