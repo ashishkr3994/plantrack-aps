@@ -7,7 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, RecommendationResult,
-  DashboardKpis, KpiDrilldown, BottleneckRec, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
+  DashboardKpis, KpiDrilldown, BottleneckRec, OvertimeRec, LeadTimeRow, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
   GanttData,
 } from "./types";
 
@@ -99,6 +99,12 @@ export const api = {
   kpis: () => request<DashboardKpis>("/dashboard/kpis"),
   kpiDrilldown: (key: string) => request<KpiDrilldown>(`/dashboard/kpi-drilldown/${key}`),
   bottleneckRecommendations: () => request<BottleneckRec[]>("/dashboard/bottleneck-recommendations"),
+  overtimeRecommendations: () => request<OvertimeRec[]>("/dashboard/overtime-recommendations"),
+  leadTimes: () => request<LeadTimeRow[]>("/lead-times"),
+  updateLeadTime: (family: string, body: LeadTimeRow) =>
+    request<{ ok: boolean; delivery_lead_days: number }>(`/lead-times/${encodeURIComponent(family)}`,
+      { method: "PUT", body: JSON.stringify(body) }),
+  ganttData: () => request<GanttData>("/schedule/gantt"),
   delayReasons: () => request<Array<{ root_cause: string; count: number; total_hours: number }>>("/dashboard/delay-reasons"),
   recoveryPipeline: () => request<Array<Record<string, unknown>>>("/dashboard/recovery-pipeline"),
   capacityHeatmap: () => request<CapacityHeatmap>("/dashboard/capacity-heatmap"),
@@ -205,7 +211,6 @@ export const api = {
   rescheduleLog: (orderId: string) =>
     request<RescheduleLogRow[]>(`/schedule/orders/${orderId}/reschedule-log`),
   delayedOrders: () => request<DelayedOrderRow[]>("/dashboard/delayed-orders"),
-  ganttData: () => request<GanttData>("/schedule/gantt"),
   recommendRecovery: (orderId: string) =>
     request<RecommendationResult>(`/schedule/orders/${orderId}/recommend`, { method: "POST" }),
 
