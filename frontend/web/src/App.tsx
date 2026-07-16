@@ -78,7 +78,7 @@ function ThemeToggle() {
   return (
     <button className="ghost icon-btn" title={dark ? "Switch to light mode" : "Switch to dark mode"}
       onClick={() => setDark((d) => !d)}>
-      {dark ? "" : ""}
+      {dark ? <span aria-hidden="true">&#9789;</span> : <span aria-hidden="true">&#9728;</span>}
     </button>
   );
 }
