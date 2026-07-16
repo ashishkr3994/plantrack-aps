@@ -43,6 +43,42 @@ def _current_delivery(db: Session, order_pk: int):
     return row[0] if row else None
 
 
+def _bottleneck_neighbors(db: Session, order_id: str, max_neighbors: int = 6) -> list[str]:
+    """Orders that compete with the target for its bottleneck work centre(s).
+
+    Isolated single-order recovery is optimistic because it ignores shop-wide
+    contention. Instead of re-solving the whole fleet (slow, and disruptive to
+    unrelated orders), we recover the target against just the orders sharing its
+    most-loaded work centre(s) -- the ones actually contending for the same
+    constrained machines. This captures the real contention at a fraction of the
+    cost, and self-sizes: few neighbours on a quiet machine, more on a busy one.
+    """
+    # the target's work centres, ranked by how overloaded they are
+    wcs = [r[0] for r in db.execute(text("""
+        SELECT DISTINCT oo.work_center
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        WHERE o.order_id = :oid
+    """), {"oid": order_id}).fetchall()]
+    if not wcs:
+        return []
+    # prefer the target's work centres that are actually overloaded (bottlenecks)
+    overloaded = {r[0] for r in db.execute(text(
+        "SELECT DISTINCT work_center FROM capacity_load WHERE overloaded")).fetchall()}
+    focus = [w for w in wcs if w in overloaded] or wcs
+
+    rows = db.execute(text("""
+        SELECT DISTINCT o.order_id
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        JOIN planned_schedule ps ON ps.order_id = o.id AND ps.is_current
+        WHERE oo.work_center = ANY(:wcs) AND o.order_id <> :oid
+        ORDER BY o.order_id
+        LIMIT :lim
+    """), {"wcs": focus, "oid": order_id, "lim": max_neighbors}).fetchall()
+    return [r[0] for r in rows]
+
+
 def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
                   performed_by: str | None = None, dry_run: bool = False) -> dict:
     """Compute a single-order recovery. When dry_run=True, nothing is persisted
@@ -70,8 +106,15 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
         db.flush()
 
     try:
+        # contention-aware scope: solve the target together with the orders that
+        # share its bottleneck work centre(s), so the recovery accounts for real
+        # shop contention instead of assuming the target has the machines to
+        # itself. Neighbours are included for realism only; we persist just the
+        # target (below) so their committed schedules are left intact.
+        neighbors = _bottleneck_neighbors(db, order_id)
+        scope = [order_id] + neighbors
         si = load_scheduling_input(
-            db, minutes_per_day=minutes_per_day, order_ids=[order_id])
+            db, minutes_per_day=minutes_per_day, order_ids=scope)
         result = solve(si, max_seconds=opts.time_budget_s)
         if not result.feasible:
             return {"feasible": False, "status": result.status,
@@ -83,6 +126,7 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
                 "feasible": True,
                 "order_id": order_id,
                 "dry_run": True,
+                "contention_neighbors": neighbors,
                 "baseline_delivery": baseline_delivery.isoformat() if baseline_delivery else None,
                 "on_time": sched_order.on_time if sched_order else None,
                 "lateness_min": sched_order.lateness_min if sched_order else None,
@@ -94,7 +138,8 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
                     "partial_qty": opts.partial_qty, "mode": opts.mode,
                 },
             }
-        persist(db, si, result, mode=opts.mode)
+        # persist ONLY the target order (neighbours were context, not edits)
+        persist(db, si, result, mode=opts.mode, only_order_pks={order.id})
     finally:
         # restore the stored qty (the recovery models a scenario, not a qty edit)
         if opts.partial_qty and opts.partial_qty > 0:
