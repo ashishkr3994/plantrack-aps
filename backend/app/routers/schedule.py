@@ -78,6 +78,64 @@ def get_order_schedule(order_id: str, db: Session = Depends(get_db)):
             "operations": [dict(r) for r in ops]}
 
 
+@router.get("/gantt")
+def get_gantt_data(db: Session = Depends(get_db)):
+    """All CURRENT operations across every order, for the shop-wide timeline
+    view: machines on one axis, time on the other. Read-only; changes nothing.
+    Also returns logged downtime windows so outages render alongside real work.
+    """
+    ops = db.execute(text("""
+        SELECT oo.work_center, oo.operation_seq, oo.planned_start, oo.planned_end,
+               oo.parallel_group, o.order_id, o.priority, o.customer
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+        WHERE oo.planned_start IS NOT NULL AND oo.planned_end IS NOT NULL
+        ORDER BY oo.work_center, oo.planned_start
+    """)).mappings().all()
+
+    downtime = db.execute(text("""
+        SELECT ae.event_timestamp, ae.downtime_mins, ae.downtime_reason,
+               o.order_id, oo.work_center
+        FROM actual_event ae
+        LEFT JOIN order_header o ON o.id = ae.order_id
+        LEFT JOIN order_operation oo ON oo.order_id = ae.order_id
+            AND oo.operation_seq = ae.operation_seq
+        JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+        WHERE ae.event_type = 'pause' AND ae.downtime_mins > 0
+        ORDER BY ae.event_timestamp
+    """)).mappings().all()
+
+    # work-centre-wide scope is tagged '[WC]' on the reason (see events.py); the
+    # actual machine is the affected operation's work centre on its route --
+    # NOT parsed from the reason text, which only carries the scope tag.
+    dt_out = []
+    for d in downtime:
+        reason = d["downtime_reason"] or ""
+        wc_wide = reason.startswith("[WC]")
+        dt_out.append({
+            "work_center": d["work_center"] if wc_wide else None,
+            "order_id": d["order_id"],
+            "start": d["event_timestamp"].isoformat(),
+            "duration_mins": d["downtime_mins"],
+            "reason": reason,
+        })
+
+    return {
+        "operations": [{
+            "work_center": r["work_center"],
+            "operation_seq": r["operation_seq"],
+            "start": r["planned_start"].isoformat(),
+            "end": r["planned_end"].isoformat(),
+            "parallel_group": r["parallel_group"],
+            "order_id": r["order_id"],
+            "priority": r["priority"],
+            "customer": r["customer"],
+        } for r in ops],
+        "downtime": dt_out,
+    }
+
+
 class RecoverRequest(BaseModel):
     overtime: bool = False
     overtime_hrs: int = 4
@@ -138,3 +196,4 @@ def reschedule_log(order_id: str, db: Session = Depends(get_db)):
         "performed_by": r.performed_by,
         "performed_at": r.performed_at.isoformat() if r.performed_at else None,
     } for r in rows]
+
