@@ -29,7 +29,7 @@ def _next_version(db: Session, order_pk: int) -> int:
 
 
 def persist(db: Session, si: SchedulingInput, result: ScheduleResult,
-            mode: str = "forward") -> dict:
+            mode: str = "forward", only_order_pks: set | None = None) -> dict:
     cal = si.calendar
     # group scheduled ops by order
     ops_by_order: dict[int, list] = {}
@@ -38,6 +38,11 @@ def persist(db: Session, si: SchedulingInput, result: ScheduleResult,
 
     written = 0
     for o in si.orders:
+        # scoped persist (contention-aware recovery): solve may include neighbour
+        # orders for realism, but we only write the target(s) so neighbours'
+        # committed schedules are not disturbed.
+        if only_order_pks is not None and o.pk not in only_order_pks:
+            continue
         ops = sorted(ops_by_order.get(o.pk, []), key=lambda x: x.operation_seq)
         if not ops:
             continue
