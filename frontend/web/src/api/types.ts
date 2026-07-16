@@ -386,6 +386,30 @@ export interface LeadTimeRow {
   delivery_lead_days?: number;
 }
 
+export interface GanttOp {
+  work_center: string;
+  operation_seq: number;
+  start: string;
+  end: string;
+  parallel_group: string | null;
+  order_id: string;
+  priority: Priority;
+  customer: string;
+}
+
+export interface GanttDowntime {
+  work_center: string | null;
+  order_id: string | null;
+  start: string;
+  duration_mins: number;
+  reason: string;
+}
+
+export interface GanttData {
+  operations: GanttOp[];
+  downtime: GanttDowntime[];
+}
+
 export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
 export interface CapacityHeatmap {
   work_centers: string[];
