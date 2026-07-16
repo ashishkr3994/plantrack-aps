@@ -113,11 +113,25 @@ def solve(si: SchedulingInput, max_seconds: float = 30.0, workers: int = 1,
     for o in si.orders:
         seq_to_end = {}
         end_vars = []
+        # scrap rework increases the units the solver must (re)produce, which
+        # scales operation run time. Completed ops are pinned to their recorded
+        # end so the solver treats already-done work as fixed.
+        eff_qty = o.qty + int(getattr(o, "rework_units", 0) or 0)
+        completed = getattr(o, "completed_ops", {}) or {}
         for op in o.ops:
-            dur = base_duration(op, o.qty)
+            done_end = completed.get(op.seq)
+            if done_end is not None:
+                # pin a completed op: zero-flex, fixed at its recorded end. It
+                # still occupies its machine so nothing else double-books that
+                # window, and successors are forced to start after it.
+                dur = 0
+                start = model.NewConstant(int(done_end))
+                end = model.NewConstant(int(done_end))
+            else:
+                dur = base_duration(op, eff_qty)
+                start = model.NewIntVar(o.material_ready_min, horizon, f"s_{o.order_id}_{op.seq}")
+                end = model.NewIntVar(o.material_ready_min, horizon, f"e_{o.order_id}_{op.seq}")
             sfx = f"{o.order_id}_{op.seq}"
-            start = model.NewIntVar(o.material_ready_min, horizon, f"s_{sfx}")
-            end = model.NewIntVar(o.material_ready_min, horizon, f"e_{sfx}")
 
             eligible = op.eligible_work_centers or [op.work_center]
             machines = {}
