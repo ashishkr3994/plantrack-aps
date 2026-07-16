@@ -20,8 +20,7 @@ from .calendar import WorkingCalendar
 PACK_DAYS = 1
 DISPATCH_DAYS = 1
 TRANSPORT_DAYS = 2
-# total default delivery lead = 4 days
-DELIVERY_LEAD_DAYS = PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS
+DELIVERY_LEAD_DAYS = PACK_DAYS + DISPATCH_DAYS + TRANSPORT_DAYS  # = 4
 
 
 @dataclass
@@ -60,6 +59,13 @@ class OrderInput:
     # -- OrderInput(id, pk, route, qty, prio, due, ready, due_dt, [ops]) -- and
     # callers that pass ops positionally keep working; loader sets it by keyword.
     delivery_lead_days: int = 4
+    # Execution-event feedback into the solver:
+    #  - completed_ops: {operation_seq: end_minute} for ops already finished, so
+    #    the solver pins them (won't re-plan) and successors start after them.
+    #  - rework_units: extra units the solver must (re)produce due to scrap, added
+    #    to the effective quantity that drives operation run time.
+    completed_ops: dict = field(default_factory=dict)
+    rework_units: int = 0
 
 
 @dataclass
@@ -138,6 +144,25 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
     q = db.query(models.OrderHeader)
     if order_ids:
         q = q.filter(models.OrderHeader.order_id.in_(order_ids))
+    # Execution-event feedback maps (scrap -> rework units; complete -> done ops
+    # with their end minute). Keyed by order pk; consumed when building each
+    # OrderInput below so the solver re-plans around real progress and rework.
+    rework_by_order: dict[int, int] = {}
+    completed_by_order: dict[int, dict] = {}
+    for ev in db.query(models.ActualEvent).filter(
+            models.ActualEvent.event_type.in_(["scrap", "complete"])).all():
+        if ev.order_id is None:
+            continue
+        if ev.event_type == "scrap":
+            # scrapped units must be remade -> add to rework quantity
+            rework_by_order[ev.order_id] = rework_by_order.get(ev.order_id, 0) + int(ev.event_qty or 0)
+        elif ev.event_type == "complete" and ev.operation_seq is not None:
+            ts = ev.event_timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            end_min = max(0, cal.working_minutes_between(origin, ts))
+            completed_by_order.setdefault(ev.order_id, {})[int(ev.operation_seq)] = end_min
+
     orders: list[OrderInput] = []
     for o in q.all():
         route_id = prod_route.get(o.product_id)
@@ -176,6 +201,8 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             material_ready_min=material_ready_min, committed_due_dt=committed_eod,
             delivery_lead_days=lead_days,
             ops=routes[route_id],
+            completed_ops=completed_by_order.get(o.id, {}),
+            rework_units=rework_by_order.get(o.id, 0),
         ))
 
     # work-center capacity map
