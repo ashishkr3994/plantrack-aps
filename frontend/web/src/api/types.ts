@@ -230,6 +230,15 @@ export interface ImportResult {
   errors: string[];
 }
 
+export interface SandboxEventOverride {
+  event_type: "pause" | "scrap" | "complete";
+  operation_seq: number;
+  event_timestamp?: string | null;
+  downtime_mins?: number;
+  whole_wc?: boolean;
+  qty?: number;
+}
+
 export interface SandboxOverride {
   order_id: string;
   qty?: number | null;
@@ -237,54 +246,59 @@ export interface SandboxOverride {
   committed_due_dt?: string | null;
   exclude?: boolean;
   partial_qty?: number | null;
+  events?: SandboxEventOverride[];
 }
 
-export interface SandboxSummary {
-  status: string;
-  feasible: boolean;
-  makespan: number | null;
-  weighted_tardiness: number;
-  orders_total: number;
-  orders_on_time: number;
-  wall_time_s: number;
-  bottleneck?: string | null;
+export interface SandboxKpis {
+  orders: number;
+  schedule_adherence_pct: number | null;
+  on_time_delivery_pct: number | null;
+  orders_at_risk: number;
+  delayed_critical: number;
+  material_at_risk: number;
+  capacity_conflicts: number;
+}
+
+export interface SandboxScheduleStage {
+  stage: string;
+  kind: "milestone" | "op";
+  operation_seq?: number;
+  parallel_group?: string | null;
+  start: string | null;
+  end: string | null;
 }
 
 export interface SandboxOrderResult {
   order_id: string;
-  mode: string;
-  start_dt: string | null;
-  finish_dt: string | null;
-  due_dt: string | null;
-  on_time: boolean;
-  lateness_min: number;
-  baseline_finish_dt: string | null;
-  baseline_lateness_min: number | null;
+  qty_live: number | null;
+  qty_whatif: number;
+  priority_live: string | null;
+  priority_whatif: string;
+  committed_live: string | null;
+  committed_whatif: string;
+  planned_delivery_live: string | null;
+  planned_delivery_whatif: string | null;
+  buffer_hrs_live: number | null;
+  buffer_hrs_whatif: number | null;
+  status_whatif: "on" | "risk" | "delay" | "crit";
+  risk_signal_whatif: string | null;
+  schedule_live: SandboxScheduleStage[];
+  schedule_whatif: SandboxScheduleStage[];
+  execution_events_whatif: SandboxEventOverride[];
   changed: boolean;
-  reason: string | null;
-}
-
-export interface SandboxOpResult {
-  order_id: string;
-  operation_seq: number;
-  work_center: string;
-  start_dt: string | null;
-  finish_dt: string | null;
-  baseline_work_center: string | null;
-  baseline_start_dt: string | null;
-  moved: boolean;
 }
 
 export interface SandboxResult {
+  feasible: boolean;
   mode: string;
-  question: string;
-  baseline: SandboxSummary;
-  scenario: SandboxSummary;
-  orders: SandboxOrderResult[];
-  operations: SandboxOpResult[];
+  status?: string;
+  message?: string;
+  kpis_live?: SandboxKpis;
+  kpis_whatif?: SandboxKpis;
+  orders?: SandboxOrderResult[];
   applied_changes: string[];
-  note: string;
-  baseline_order_count: number;
+  note?: string;
+  baseline_order_count?: number;
 }
 
 
@@ -474,3 +488,4 @@ export interface RecommendationResult {
   bottleneck_machine?: string | null;
   message: string;
 }
+
