@@ -101,20 +101,29 @@ def get_gantt_data(db: Session = Depends(get_db)):
         LEFT JOIN order_header o ON o.id = ae.order_id
         LEFT JOIN order_operation oo ON oo.order_id = ae.order_id
             AND oo.operation_seq = ae.operation_seq
-        JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+            AND oo.schedule_id = (
+                SELECT ps2.id FROM planned_schedule ps2
+                WHERE ps2.order_id = ae.order_id AND ps2.is_current
+                LIMIT 1
+            )
         WHERE ae.event_type = 'pause' AND ae.downtime_mins > 0
         ORDER BY ae.event_timestamp
     """)).mappings().all()
 
-    # work-centre-wide scope is tagged '[WC]' on the reason (see events.py); the
-    # actual machine is the affected operation's work centre on its route --
-    # NOT parsed from the reason text, which only carries the scope tag.
+    # Work-centre-wide scope is tagged '[WC]' on the reason (see events.py), but
+    # that tag ONLY affects how the SOLVER enforces it (whole machine blocked vs
+    # just this order's operation blocked) -- it does NOT determine whether we
+    # can place it on the timeline. We already resolve the affected operation's
+    # real work centre via the join above for BOTH scopes, so both are shown:
+    # an order-scoped pause still visibly marks the outage on that machine's
+    # row, it's just labelled as affecting one order rather than the whole shop.
     dt_out = []
     for d in downtime:
         reason = d["downtime_reason"] or ""
-        wc_wide = reason.startswith("[WC]")
+        whole_wc = reason.startswith("[WC]")
         dt_out.append({
-            "work_center": d["work_center"] if wc_wide else None,
+            "work_center": d["work_center"],
+            "whole_wc": whole_wc,
             "order_id": d["order_id"],
             "start": d["event_timestamp"].isoformat(),
             "duration_mins": d["downtime_mins"],
