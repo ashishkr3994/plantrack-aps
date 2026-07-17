@@ -37,6 +37,7 @@ export function Alerts() {
       qc.invalidateQueries({ queryKey: ["alerts"] });
       qc.invalidateQueries({ queryKey: ["deviations"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
+      qc.invalidateQueries({ queryKey: ["gantt"] });
     },
   });
 
@@ -49,7 +50,7 @@ export function Alerts() {
         <div className="row" style={{ gap: 10 }}>
           {canRun && (
             <button onClick={() => runEngine.mutate()} disabled={runEngine.isPending}>
-              {runEngine.isPending ? "Checking…" : "Check for deviations now"}
+              {runEngine.isPending ? "Checking" : "Check for deviations now"}
             </button>
           )}
         </div>
@@ -133,8 +134,8 @@ function Deviations() {
                   <td><Pill tone={sevTone(d.severity)}>{d.severity}</Pill></td>
                   <td>{d.milestone_name}</td>
                   <td className="num">{Math.round(d.deviation_minutes)}</td>
-                  <td className="muted">{d.root_cause_code ?? "—"}</td>
-                  <td>{d.action_owner ?? "—"}</td>
+                  <td className="muted">{d.root_cause_code ?? "-"}</td>
+                  <td>{d.action_owner ?? "-"}</td>
                   <td>{d.resolution_status}</td>
                 </tr>
               ))}
