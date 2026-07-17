@@ -1,58 +1,101 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useOrders } from "@/hooks/queries";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Loading, Pill } from "@/components/ui";
-import type { SandboxOverride, SandboxResult, SandboxOrderResult } from "@/api/types";
+import { Loading, Pill, PriorityPill, Modal } from "@/components/ui";
+import { fmtDate, fmtDateTime, fmtHours } from "@/lib/format";
+import type {
+  SandboxOverride, SandboxResult, SandboxOrderResult, SandboxEventOverride,
+  SandboxScheduleStage,
+} from "@/api/types";
 
-interface Row extends SandboxOverride {
-  _key: number;
+interface RowState {
+  overridden: boolean;
+  qty: string;
+  partial_qty: string;
+  priority: string;
+  committed_due_dt: string;
+  exclude: boolean;
+  event_type: string;
+  event_operation_seq: string;
+  event_downtime_mins: string;
+  event_whole_wc: boolean;
+  event_qty: string;
 }
 
-function fmt(dt: string | null): string {
-  if (!dt) return "—";
-  const d = new Date(dt);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
-function fmtDay(dt: string | null): string {
-  if (!dt) return "—";
-  return new Date(dt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+const emptyRow: RowState = {
+  overridden: false, qty: "", partial_qty: "", priority: "", committed_due_dt: "",
+  exclude: false, event_type: "", event_operation_seq: "", event_downtime_mins: "",
+  event_whole_wc: false, event_qty: "",
+};
+
+const PAGE_SIZE = 20;
 
 export function Sandbox() {
   const { hasRole } = useAuth();
   const canRun = hasRole("planner");
   const orders = useOrders();
 
-  const [rows, setRows] = useState<Row[]>([]);
+  const [visible, setVisible] = useState<string[]>([]);
+  const [rows, setRows] = useState<Map<string, RowState>>(new Map());
+  const [addPick, setAddPick] = useState("");
   const [mode, setMode] = useState("forward");
-  const [budget, setBudget] = useState(15);
+  const [budget, setBudget] = useState(20);
   const [overtime, setOvertime] = useState(0);
   const [result, setResult] = useState<SandboxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<SandboxOrderResult | null>(null);
 
-  const addRow = () =>
-    setRows((r) => [...r, { _key: Date.now() + Math.random(), order_id: "", exclude: false }]);
-  const updateRow = (key: number, patch: Partial<Row>) =>
-    setRows((r) => r.map((x) => (x._key === key ? { ...x, ...patch } : x)));
-  const removeRow = (key: number) => setRows((r) => r.filter((x) => x._key !== key));
+  const byId = new Map((orders.data ?? []).map((o) => [o.order_id, o]));
+
+  const addAll = () => setVisible((orders.data ?? []).map((o) => o.order_id));
+  const addOne = () => {
+    if (!addPick || visible.includes(addPick)) return;
+    setVisible((v) => [...v, addPick]);
+    setAddPick("");
+  };
+  const removeOne = (oid: string) => {
+    setVisible((v) => v.filter((x) => x !== oid));
+    setRows((m) => { const n = new Map(m); n.delete(oid); return n; });
+  };
+  const rowFor = (oid: string): RowState => rows.get(oid) ?? emptyRow;
+  const setRow = (oid: string, patch: Partial<RowState>) =>
+    setRows((m) => { const n = new Map(m); n.set(oid, { ...rowFor(oid), ...patch }); return n; });
+  const toggleOverride = (oid: string) =>
+    setRow(oid, { overridden: !rowFor(oid).overridden });
 
   const run = async () => {
     setError(null);
     setResult(null);
-    const overrides: SandboxOverride[] = rows
-      .filter((r) => r.order_id)
-      .map((r) => ({
-        order_id: r.order_id,
+    const overrides: SandboxOverride[] = [];
+    for (const oid of visible) {
+      const r = rows.get(oid);
+      if (!r || !r.overridden) continue;
+      const events: SandboxEventOverride[] = [];
+      if (r.event_type && r.event_operation_seq) {
+        events.push({
+          event_type: r.event_type as "pause" | "scrap" | "complete",
+          operation_seq: Number(r.event_operation_seq),
+          downtime_mins: r.event_downtime_mins ? Number(r.event_downtime_mins) : 0,
+          whole_wc: r.event_whole_wc,
+          qty: r.event_qty ? Number(r.event_qty) : 0,
+        });
+      }
+      overrides.push({
+        order_id: oid,
         qty: r.qty ? Number(r.qty) : undefined,
+        partial_qty: r.partial_qty ? Number(r.partial_qty) : undefined,
         priority: r.priority || undefined,
         committed_due_dt: r.committed_due_dt || undefined,
         exclude: r.exclude || undefined,
-        partial_qty: r.partial_qty ? Number(r.partial_qty) : undefined,
-      }));
+        events: events.length ? events : undefined,
+      });
+    }
     setBusy(true);
+    setPage(0);
     try {
       const res = await api.simulate({ overrides, mode, time_budget_s: budget, overtime_hrs_per_day: overtime });
       setResult(res);
@@ -67,71 +110,143 @@ export function Sandbox() {
     <div className="stack">
       <div className="spread">
         <h2>What-if sandbox</h2>
-        <Pill tone="info">Simulation only — live plan untouched</Pill>
+        <Pill tone="info">Simulation only - live plan untouched</Pill>
       </div>
       <p className="muted" style={{ margin: 0 }}>
-        Try changes against a copy of the live plan and see the resulting dates before
-        committing. Adjust an order's quantity, priority, or due date; reschedule a partial
-        quantity; add overtime; or exclude an order — then run the optimiser (CP-SAT). Nothing
-        here changes the real schedule.
+        Add orders to a scenario, override only the ones you want to test, then run the
+        optimiser against a copy of the live plan. Nothing here changes the real schedule.
       </p>
 
       {!canRun && <div className="banner err">Running simulations requires the planner role.</div>}
 
       <section className="card">
         <div className="hd">
-          Scenario overrides
-          <button className="ghost" onClick={addRow} disabled={!canRun}>Add override</button>
+          <span>Scenario builder{visible.length > 0 && <span className="muted" style={{ fontWeight: 500 }}> - {visible.length} order{visible.length === 1 ? "" : "s"}</span>}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <select value={addPick} onChange={(e) => setAddPick(e.target.value)} style={{ width: 200 }} disabled={!canRun}>
+              <option value="">Add an order...</option>
+              {(orders.data ?? []).filter((o) => !visible.includes(o.order_id)).map((o) => (
+                <option key={o.order_id} value={o.order_id}>{o.order_id} - {o.customer}</option>
+              ))}
+            </select>
+            <button onClick={addOne} disabled={!canRun || !addPick}>Add</button>
+            <button className="primary" onClick={addAll} disabled={!canRun || orders.isLoading}>Add all orders</button>
+          </div>
         </div>
         <div className="bd" style={{ padding: 0 }}>
           {orders.isLoading && <Loading />}
-          {rows.length === 0 && (
-            <div className="state">No overrides — running now re-solves the live plan as a baseline. Add an override or add overtime below to explore a change.</div>
+          {visible.length === 0 && !orders.isLoading && (
+            <div className="state">No orders in the scenario yet. Add all orders, or add a few individually.</div>
           )}
-          {rows.length > 0 && (
-            <table>
+          {visible.length > 0 && (
+            <table className="roomy">
               <thead>
-                <tr><th>Order</th><th>New qty</th><th>Partial qty</th><th>Priority</th><th>New due date</th><th>Exclude</th><th></th></tr>
+                <tr>
+                  <th style={{ width: 30 }}></th>
+                  <th>Order</th><th>Customer</th><th className="num">Qty</th><th>Priority</th>
+                  <th>Committed</th><th>Override</th><th style={{ width: 30 }}></th>
+                </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r._key}>
-                    <td style={{ minWidth: 170 }}>
-                      <select value={r.order_id} onChange={(e) => updateRow(r._key, { order_id: e.target.value })}>
-                        <option value="">Select order…</option>
-                        {orders.data?.map((o) => (
-                          <option key={o.order_id} value={o.order_id}>{o.order_id} — {o.customer}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td style={{ width: 100 }}>
-                      <input type="number" min={1} placeholder="—" value={r.qty ?? ""} disabled={r.exclude}
-                        onChange={(e) => updateRow(r._key, { qty: e.target.value ? Number(e.target.value) : null })} />
-                    </td>
-                    <td style={{ width: 100 }}>
-                      <input type="number" min={1} placeholder="—" value={r.partial_qty ?? ""} disabled={r.exclude}
-                        onChange={(e) => updateRow(r._key, { partial_qty: e.target.value ? Number(e.target.value) : null })} />
-                    </td>
-                    <td style={{ width: 110 }}>
-                      <select value={r.priority ?? ""} disabled={r.exclude}
-                        onChange={(e) => updateRow(r._key, { priority: e.target.value || null })}>
-                        <option value="">unchanged</option>
-                        <option value="HIGH">HIGH</option><option value="MED">MED</option><option value="LOW">LOW</option>
-                      </select>
-                    </td>
-                    <td style={{ width: 150 }}>
-                      <input type="date" value={r.committed_due_dt ?? ""} disabled={r.exclude}
-                        onChange={(e) => updateRow(r._key, { committed_due_dt: e.target.value || null })} />
-                    </td>
-                    <td style={{ width: 60, textAlign: "center" }}>
-                      <input type="checkbox" style={{ width: "auto" }} checked={!!r.exclude}
-                        onChange={(e) => updateRow(r._key, { exclude: e.target.checked })} />
-                    </td>
-                    <td style={{ width: 36 }}>
-                      <button className="ghost danger" onClick={() => removeRow(r._key)}>✕</button>
-                    </td>
-                  </tr>
-                ))}
+                {visible.map((oid) => {
+                  const o = byId.get(oid);
+                  const r = rowFor(oid);
+                  if (!o) return null;
+                  return (
+                    <>
+                      <tr key={oid}>
+                        <td>
+                          <input type="checkbox" style={{ width: "auto" }} checked={r.overridden}
+                            disabled={!canRun} onChange={() => toggleOverride(oid)} />
+                        </td>
+                        <td className="mono">{o.order_id}</td>
+                        <td>{o.customer}</td>
+                        <td className="num">{o.order_qty}</td>
+                        <td><PriorityPill priority={o.priority} /></td>
+                        <td>{fmtDate(o.committed_delivery_date)}</td>
+                        <td className="muted">{r.overridden ? "Editing below" : "Not modified"}</td>
+                        <td><button className="ghost danger" onClick={() => removeOne(oid)} title="Remove from scenario">&times;</button></td>
+                      </tr>
+                      {r.overridden && (
+                        <tr key={`${oid}-edit`}>
+                          <td></td>
+                          <td colSpan={7} style={{ padding: 8 }}>
+                            <div style={{ background: "var(--canvas)", borderRadius: "var(--r-sm)", padding: 10 }}>
+                              <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+                                <div style={{ width: 100 }}>
+                                  <label>New qty</label>
+                                  <input type="number" min={1} placeholder={String(o.order_qty)} value={r.qty}
+                                    onChange={(e) => setRow(oid, { qty: e.target.value })} />
+                                </div>
+                                <div style={{ width: 100 }}>
+                                  <label>Partial qty</label>
+                                  <input type="number" min={1} placeholder="-" value={r.partial_qty}
+                                    onChange={(e) => setRow(oid, { partial_qty: e.target.value })} />
+                                </div>
+                                <div style={{ width: 110 }}>
+                                  <label>Priority</label>
+                                  <select value={r.priority} onChange={(e) => setRow(oid, { priority: e.target.value })}>
+                                    <option value="">unchanged</option>
+                                    <option value="HIGH">HIGH</option><option value="MED">MED</option><option value="LOW">LOW</option>
+                                  </select>
+                                </div>
+                                <div style={{ width: 150 }}>
+                                  <label>New due date</label>
+                                  <input type="date" value={r.committed_due_dt}
+                                    onChange={(e) => setRow(oid, { committed_due_dt: e.target.value })} />
+                                </div>
+                                <div style={{ width: 130 }}>
+                                  <label>Add event</label>
+                                  <select value={r.event_type} onChange={(e) => setRow(oid, { event_type: e.target.value })}>
+                                    <option value="">none</option>
+                                    <option value="pause">Downtime</option>
+                                    <option value="scrap">Scrap</option>
+                                    <option value="complete">Complete</option>
+                                  </select>
+                                </div>
+                                {r.event_type && (
+                                  <div style={{ width: 90 }}>
+                                    <label>Op seq</label>
+                                    <input type="number" placeholder="e.g. 30" value={r.event_operation_seq}
+                                      onChange={(e) => setRow(oid, { event_operation_seq: e.target.value })} />
+                                  </div>
+                                )}
+                                {r.event_type === "pause" && (
+                                  <div style={{ width: 100 }}>
+                                    <label>Minutes</label>
+                                    <input type="number" min={1} value={r.event_downtime_mins}
+                                      onChange={(e) => setRow(oid, { event_downtime_mins: e.target.value })} />
+                                  </div>
+                                )}
+                                {r.event_type === "pause" && (
+                                  <div style={{ width: 150, alignSelf: "flex-end", paddingBottom: 8 }}>
+                                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 0 }}>
+                                      <input type="checkbox" style={{ width: "auto" }} checked={r.event_whole_wc}
+                                        onChange={(e) => setRow(oid, { event_whole_wc: e.target.checked })} />
+                                      Whole machine
+                                    </label>
+                                  </div>
+                                )}
+                                {r.event_type === "scrap" && (
+                                  <div style={{ width: 100 }}>
+                                    <label>Scrap qty</label>
+                                    <input type="number" min={1} value={r.event_qty}
+                                      onChange={(e) => setRow(oid, { event_qty: e.target.value })} />
+                                  </div>
+                                )}
+                              </div>
+                              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 10, marginBottom: 0, color: "var(--risk)" }}>
+                                <input type="checkbox" style={{ width: "auto" }} checked={r.exclude}
+                                  onChange={(e) => setRow(oid, { exclude: e.target.checked })} />
+                                Exclude from scenario
+                              </label>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -143,8 +258,8 @@ export function Sandbox() {
           <div style={{ width: 210 }}>
             <label>Scheduling mode</label>
             <select value={mode} onChange={(e) => setMode(e.target.value)} disabled={!canRun}>
-              <option value="forward">Forward — how soon can we finish?</option>
-              <option value="backward">Backward — when must we start?</option>
+              <option value="forward">Forward - earliest finish</option>
+              <option value="backward">Backward - from due dates</option>
             </select>
           </div>
           <div style={{ width: 150 }}>
@@ -157,144 +272,257 @@ export function Sandbox() {
             <input type="number" min={5} max={60} value={budget} disabled={!canRun}
               onChange={(e) => setBudget(Number(e.target.value))} />
           </div>
-          <button className="primary" onClick={run} disabled={!canRun || busy}>
-            {busy ? "Simulating…" : "Run simulation"}
+          <button className="primary" onClick={run} disabled={!canRun || busy || visible.length === 0}>
+            {busy ? "Simulating..." : "Run simulation"}
           </button>
         </div>
       </section>
 
       {error && <div className="banner err">{error}</div>}
-      {busy && <div className="banner live"><span className="spinner" /> &nbsp;Running the optimiser on a copy of the plan…</div>}
+      {busy && <div className="banner live"><span className="spinner" /> &nbsp;Running the optimiser on a copy of the plan...</div>}
 
-      {result && <Results result={result} />}
+      {result && !result.feasible && (
+        <div className="banner err">{result.message ?? "This scenario has no feasible schedule."}</div>
+      )}
+
+      {result && result.feasible && (
+        <Results result={result} showAll={showAll} setShowAll={setShowAll}
+          page={page} setPage={setPage} onSelect={setSelected} />
+      )}
+
+      {selected && <DrillDown order={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }
 
-function Results({ result }: { result: SandboxResult }) {
-  const changed = result.orders.filter((o) => o.changed);
-  const movedOps = result.operations.filter((o) => o.moved);
+function statusTone(s: string): "ok" | "warn" | "risk" {
+  if (s === "on") return "ok";
+  if (s === "risk") return "warn";
+  return "risk";
+}
+
+function betterTone(live: number | null, whatif: number | null, higherIsBetter: boolean): "ok" | "warn" | "risk" {
+  if (live == null || whatif == null) return "warn";
+  if (whatif === live) return "warn";
+  const better = higherIsBetter ? whatif > live : whatif < live;
+  return better ? "ok" : "risk";
+}
+
+function KpiCompareCard({ label, live, whatif, unit, higherIsBetter }: {
+  label: string; live: number | null; whatif: number | null; unit?: string; higherIsBetter: boolean;
+}) {
+  const tone = betterTone(live, whatif, higherIsBetter);
+  const color = tone === "ok" ? "var(--ok)" : tone === "risk" ? "var(--risk)" : "var(--ink)";
+  return (
+    <div className="kpi">
+      <div className="l">{label}</div>
+      <div className="row" style={{ gap: 6, alignItems: "baseline", marginTop: 2 }}>
+        <span className="muted" style={{ fontSize: 12 }}>Live {live ?? "-"}{unit}</span>
+        <span className="muted" style={{ fontSize: 11 }}>&rarr;</span>
+        <span style={{ fontSize: 20, fontWeight: 700, color }}>{whatif ?? "-"}{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function Results({ result, showAll, setShowAll, page, setPage, onSelect }: {
+  result: SandboxResult; showAll: boolean; setShowAll: (b: boolean) => void;
+  page: number; setPage: (n: number) => void; onSelect: (o: SandboxOrderResult) => void;
+}) {
+  const all = result.orders ?? [];
+  const changedOnly = all.filter((o) => o.changed);
+  const rows = showAll ? all : changedOnly;
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const kl = result.kpis_live, kw = result.kpis_whatif;
 
   return (
     <div className="stack">
-      <div className="banner info" style={{ fontSize: 15 }}>
-        <strong>{result.question}</strong>
-        {result.applied_changes.length > 0 && (
-          <span> &nbsp;·&nbsp; Applied: {result.applied_changes.join("; ")}</span>
-        )}
-      </div>
-
-      <section className="card">
-        <div className="hd">Baseline vs scenario</div>
-        <div className="bd" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>Metric</th><th className="num">Baseline (live)</th><th className="num">Scenario</th><th>Change</th></tr></thead>
-            <tbody>
-              <MetricRow label="Orders on time" base={`${result.baseline.orders_on_time}/${result.baseline.orders_total}`} scen={`${result.scenario.orders_on_time}/${result.scenario.orders_total}`} better={result.scenario.orders_on_time >= result.baseline.orders_on_time} />
-              <MetricRow label="Weighted tardiness" base={result.baseline.weighted_tardiness} scen={result.scenario.weighted_tardiness} better={result.scenario.weighted_tardiness <= result.baseline.weighted_tardiness} />
-              <MetricRow label="Makespan (min)" base={result.baseline.makespan ?? "—"} scen={result.scenario.makespan ?? "—"} better={(result.scenario.makespan ?? 0) <= (result.baseline.makespan ?? 0)} />
-              <tr>
-                <td>Bottleneck</td>
-                <td className="num">{result.baseline.bottleneck ?? "—"}</td>
-                <td className="num"><strong>{result.scenario.bottleneck ?? "—"}</strong></td>
-                <td />
-              </tr>
-              <tr>
-                <td>Feasible</td>
-                <td className="num"><Pill tone={result.baseline.feasible ? "ok" : "risk"}>{result.baseline.feasible ? "yes" : "no"}</Pill></td>
-                <td className="num"><Pill tone={result.scenario.feasible ? "ok" : "risk"}>{result.scenario.feasible ? "yes" : "no"}</Pill></td>
-                <td />
-              </tr>
-            </tbody>
-          </table>
+      {result.applied_changes.length > 0 && (
+        <div className="banner live" style={{ fontSize: 13 }}>
+          Applied: {result.applied_changes.join("; ")}
         </div>
-      </section>
+      )}
 
-      <section className="card">
-        <div className="hd">Order dates under this scenario ({result.mode})</div>
-        <div className="bd" style={{ padding: 0 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>{result.mode === "forward" ? "Earliest start" : "Latest start"}</th>
-                <th>Finish</th>
-                <th>Due</th>
-                <th>Status</th>
-                <th>Baseline finish</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.orders.map((o) => (
-                <OrderDateRow key={o.order_id} o={o} />
-              ))}
-            </tbody>
-          </table>
+      <h3 style={{ margin: 0 }}>Results - live vs what-if</h3>
+      {kl && kw && (
+        <div className="grid kpis">
+          <KpiCompareCard label="Schedule adherence" live={kl.schedule_adherence_pct} whatif={kw.schedule_adherence_pct} unit="%" higherIsBetter />
+          <KpiCompareCard label="On-time delivery" live={kl.on_time_delivery_pct} whatif={kw.on_time_delivery_pct} unit="%" higherIsBetter />
+          <KpiCompareCard label="Orders at risk" live={kl.orders_at_risk} whatif={kw.orders_at_risk} higherIsBetter={false} />
+          <KpiCompareCard label="Delayed / critical" live={kl.delayed_critical} whatif={kw.delayed_critical} higherIsBetter={false} />
+          <KpiCompareCard label="Material at risk" live={kl.material_at_risk} whatif={kw.material_at_risk} higherIsBetter={false} />
+          <KpiCompareCard label="Capacity conflicts" live={kl.capacity_conflicts} whatif={kw.capacity_conflicts} higherIsBetter={false} />
         </div>
-      </section>
+      )}
 
       <section className="card">
-        <div className="hd">Affected routing operations ({movedOps.length} moved)</div>
-        <div className="bd" style={{ padding: 0 }}>
-          {movedOps.length === 0 ? (
-            <div className="state">No operations shifted from their baseline timing under this scenario.</div>
+        <div className="hd">
+          <div className="row" style={{ gap: 10 }}>
+            <span>Order watchlist</span>
+            <div className="row" style={{ gap: 0, border: "1px solid var(--line)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+              <button className={!showAll ? "primary" : ""} style={{ border: "none", borderRadius: 0 }}
+                onClick={() => { setShowAll(false); setPage(0); }}>
+                Changed only ({changedOnly.length})
+              </button>
+              <button className={showAll ? "primary" : ""} style={{ border: "none", borderRadius: 0, borderLeft: "1px solid var(--line)" }}
+                onClick={() => { setShowAll(true); setPage(0); }}>
+                Show all ({all.length})
+              </button>
+            </div>
+          </div>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Showing {rows.length === 0 ? 0 : page * PAGE_SIZE + 1}-{Math.min(rows.length, page * PAGE_SIZE + PAGE_SIZE)} of {rows.length}
+          </span>
+        </div>
+        <div className="bd" style={{ padding: 0, overflowX: "auto" }}>
+          {rows.length === 0 ? (
+            <div className="state">
+              {showAll ? "No orders in this scenario." : "No orders changed between live and what-if. Try \"Show all\" to review every order."}
+            </div>
           ) : (
-            <table>
+            <table className="roomy" style={{ minWidth: 900 }}>
               <thead>
-                <tr><th>Order</th><th className="num">Op</th><th>Work centre</th><th>Start</th><th>Finish</th><th>Was</th></tr>
+                <tr>
+                  <th rowSpan={2} style={{ verticalAlign: "bottom" }}>Order</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Qty</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Priority</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Committed</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Planned delivery</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Buffer</th>
+                  <th rowSpan={2} style={{ verticalAlign: "bottom" }}>Schedule</th>
+                </tr>
+                <tr>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
+                </tr>
               </thead>
               <tbody>
-                {movedOps.map((op) => (
-                  <tr key={`${op.order_id}-${op.operation_seq}`}>
-                    <td className="mono">{op.order_id}</td>
-                    <td className="num">{op.operation_seq}</td>
-                    <td>{op.work_center}{op.baseline_work_center && op.baseline_work_center !== op.work_center &&
-                      <span className="muted"> (was {op.baseline_work_center})</span>}</td>
-                    <td>{fmt(op.start_dt)}</td>
-                    <td>{fmt(op.finish_dt)}</td>
-                    <td className="muted">{fmt(op.baseline_start_dt)}</td>
+                {pageRows.map((o) => (
+                  <tr key={o.order_id}>
+                    <td className="mono">{o.order_id}</td>
+                    <td className="num">{o.qty_live ?? "-"}</td>
+                    <td className="num" style={o.qty_live !== o.qty_whatif ? { background: "var(--warn-bg)", fontWeight: 650 } : undefined}>{o.qty_whatif}</td>
+                    <td><PriorityPill priority={o.priority_live} /></td>
+                    <td style={o.priority_live !== o.priority_whatif ? { background: "var(--warn-bg)" } : undefined}><PriorityPill priority={o.priority_whatif} /></td>
+                    <td>{fmtDate(o.committed_live)}</td>
+                    <td style={o.committed_live !== o.committed_whatif ? { background: "var(--warn-bg)", fontWeight: 650 } : undefined}>{fmtDate(o.committed_whatif)}</td>
+                    <td>{fmtDate(o.planned_delivery_live)}</td>
+                    <td style={o.planned_delivery_live !== o.planned_delivery_whatif ? { background: "var(--warn-bg)", fontWeight: 650 } : undefined}>{fmtDate(o.planned_delivery_whatif)}</td>
+                    <td className="num" style={{ color: (o.buffer_hrs_live ?? 0) < 0 ? "var(--risk)" : "var(--ok)" }}>{o.buffer_hrs_live != null ? fmtHours(o.buffer_hrs_live) : "-"}</td>
+                    <td className="num" style={{
+                      color: (o.buffer_hrs_whatif ?? 0) < 0 ? "var(--risk)" : "var(--ok)",
+                      ...(o.buffer_hrs_live != null && o.buffer_hrs_whatif != null && Math.round(o.buffer_hrs_live) !== Math.round(o.buffer_hrs_whatif)
+                        ? { background: "var(--warn-bg)", fontWeight: 650 } : {}),
+                    }}>{o.buffer_hrs_whatif != null ? fmtHours(o.buffer_hrs_whatif) : "-"}</td>
+                    <td><button className="ghost" onClick={() => onSelect(o)}>View</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
+        {rows.length > 0 && (
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--line)" }}>
+            <button disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
+            <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Page {page + 1} of {totalPages}</span>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>Next</button>
+          </div>
+        )}
       </section>
 
-      {changed.length > 0 && (
-        <p className="muted" style={{ fontSize: 13 }}>
-          {changed.length} order{changed.length === 1 ? "" : "s"} changed lateness vs the live plan.
-        </p>
-      )}
-      <p className="muted" style={{ fontSize: 12 }}>{result.note}</p>
+      {result.note && <p className="muted" style={{ fontSize: 12 }}>{result.note}</p>}
     </div>
   );
 }
 
-function OrderDateRow({ o }: { o: SandboxOrderResult }) {
-  return (
-    <tr style={o.changed ? { background: "#FFFBEB" } : undefined}>
-      <td className="mono">{o.order_id}</td>
-      <td>{fmt(o.start_dt)}</td>
-      <td>{fmt(o.finish_dt)}</td>
-      <td>{fmtDay(o.due_dt)}</td>
-      <td>
-        <Pill tone={o.on_time ? "ok" : "risk"}>
-          {o.on_time ? "on time" : `late ${Math.round(o.lateness_min / 60)}h`}
-        </Pill>
-      </td>
-      <td className="muted">{fmt(o.baseline_finish_dt)}</td>
-    </tr>
-  );
+function mergeStages(live: SandboxScheduleStage[], whatif: SandboxScheduleStage[]) {
+  const key = (s: SandboxScheduleStage) => `${s.kind}:${s.stage}:${s.operation_seq ?? ""}`;
+  const liveByKey = new Map(live.map((s) => [key(s), s]));
+  const seen = new Set<string>();
+  const merged: { label: string; parallel: boolean; live: SandboxScheduleStage | null; whatif: SandboxScheduleStage | null }[] =
+    whatif.map((w) => {
+      const k = key(w);
+      seen.add(k);
+      return { label: w.stage, parallel: !!w.parallel_group, live: liveByKey.get(k) ?? null, whatif: w };
+    });
+  for (const s of live) {
+    const k = key(s);
+    if (!seen.has(k)) merged.push({ label: s.stage, parallel: !!s.parallel_group, live: s, whatif: null });
+  }
+  return merged;
 }
 
-function MetricRow({ label, base, scen, better }: { label: string; base: React.ReactNode; scen: React.ReactNode; better: boolean }) {
+function DrillDown({ order, onClose }: { order: SandboxOrderResult; onClose: () => void }) {
+  const stages = useMemo(() => mergeStages(order.schedule_live, order.schedule_whatif), [order]);
   return (
-    <tr>
-      <td>{label}</td>
-      <td className="num">{base}</td>
-      <td className="num"><strong>{scen}</strong></td>
-      <td><Pill tone={better ? "ok" : "warn"}>{better ? "same or better" : "worse"}</Pill></td>
-    </tr>
+    <Modal title={`${order.order_id} - live vs what-if`} size="lg" onClose={onClose}>
+      <div className="stack">
+        <div>
+          <div className="l" style={{ marginBottom: 6 }}>Order & status</div>
+          <table><tbody>
+            <tr><td className="muted">Quantity</td><td>{order.qty_live} &rarr; <strong>{order.qty_whatif}</strong></td></tr>
+            <tr><td className="muted">Priority</td><td><PriorityPill priority={order.priority_live} /> &rarr; <PriorityPill priority={order.priority_whatif} /></td></tr>
+            <tr><td className="muted">Committed</td><td>{fmtDate(order.committed_live)} &rarr; {fmtDate(order.committed_whatif)}</td></tr>
+            <tr><td className="muted">Status (what-if)</td><td><Pill tone={statusTone(order.status_whatif)}>{order.status_whatif}</Pill></td></tr>
+          </tbody></table>
+        </div>
+
+        <div>
+          <div className="l" style={{ marginBottom: 6 }}>Schedule (live vs what-if)</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="roomy">
+              <thead>
+                <tr>
+                  <th rowSpan={2} style={{ verticalAlign: "bottom" }}>Stage</th>
+                  <th colSpan={2} style={{ textAlign: "center" }} className="muted">Live</th>
+                  <th colSpan={2} style={{ textAlign: "center", color: "var(--teal)" }}>What-if</th>
+                </tr>
+                <tr>
+                  <th className="muted">Start</th><th className="muted">End</th>
+                  <th style={{ color: "var(--teal)" }}>Start</th><th style={{ color: "var(--teal)" }}>End</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stages.map((s, i) => (
+                  <tr key={i}>
+                    <td>{s.label}{s.parallel && <span className="muted" style={{ fontSize: 10 }}> (parallel)</span>}</td>
+                    <td>{s.live?.start ? fmtDateTime(s.live.start) : "-"}</td>
+                    <td>{s.live?.end ? fmtDateTime(s.live.end) : "-"}</td>
+                    <td>{s.whatif?.start ? fmtDateTime(s.whatif.start) : "-"}</td>
+                    <td>{s.whatif?.end ? fmtDateTime(s.whatif.end) : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <div className="l" style={{ marginBottom: 6 }}>Risk signal detected (what-if)</div>
+          <p style={{ margin: 0, fontSize: 13 }}>{order.risk_signal_whatif ?? "None - within buffer"}</p>
+        </div>
+
+        <div>
+          <div className="l" style={{ marginBottom: 6 }}>Execution events (what-if)</div>
+          {order.execution_events_whatif.length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>None added.</p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+              {order.execution_events_whatif.map((ev, i) => (
+                <li key={i}>
+                  {ev.event_type === "pause" && `Downtime, op ${ev.operation_seq}, ${ev.downtime_mins}min${ev.whole_wc ? " (whole machine)" : ""}`}
+                  {ev.event_type === "scrap" && `Scrap, op ${ev.operation_seq}, ${ev.qty} units`}
+                  {ev.event_type === "complete" && `Marked complete, op ${ev.operation_seq}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
