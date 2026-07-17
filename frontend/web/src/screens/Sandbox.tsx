@@ -353,11 +353,18 @@ function KpiCompareCard({ label, live, whatif, unit, higherIsBetter }: {
 function TimelineComparison({ result }: { result: SandboxResult }) {
   const orders = result.orders ?? [];
   const [zoom, setZoom] = useState<"compact" | "comfortable" | "wide">("comfortable");
+  const [search, setSearch] = useState("");
 
-  const liveOps = useMemo(() => flattenOps(orders, "live"), [orders]);
-  const whatifOps = useMemo(() => flattenOps(orders, "whatif"), [orders]);
+  const allLiveOps = useMemo(() => flattenOps(orders, "live"), [orders]);
+  const allWhatifOps = useMemo(() => flattenOps(orders, "whatif"), [orders]);
   const liveDowntime: GanttDowntime[] = result.downtime_live ?? [];
   const whatifDowntime: GanttDowntime[] = result.downtime_whatif ?? [];
+
+  // same filter text applied to both panels, so filtering an order narrows
+  // the live AND what-if timelines together -- keeping them comparable.
+  const q = search.trim().toLowerCase();
+  const liveOps = q ? allLiveOps.filter((o) => o.order_id.toLowerCase().includes(q)) : allLiveOps;
+  const whatifOps = q ? allWhatifOps.filter((o) => o.order_id.toLowerCase().includes(q)) : allWhatifOps;
 
   // shared range across BOTH sides, so the two panels align on the same X
   // axis -- otherwise each would pick its own window and a shift wouldn't be
@@ -367,12 +374,25 @@ function TimelineComparison({ result }: { result: SandboxResult }) {
     { operations: whatifOps, downtime: whatifDowntime },
   ]), [liveOps, whatifOps, liveDowntime, whatifDowntime]);
 
-  if (liveOps.length === 0 && whatifOps.length === 0) return null;
+  if (allLiveOps.length === 0 && allWhatifOps.length === 0) return null;
+
+  const shownCount = new Set([...liveOps, ...whatifOps].map((o) => o.order_id)).size;
+  const totalCount = new Set([...allLiveOps, ...allWhatifOps].map((o) => o.order_id)).size;
 
   return (
     <section className="card">
-      <div className="hd">Timeline - live vs what-if</div>
+      <div className="hd">
+        <span>Timeline - live vs what-if</span>
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <input type="search" placeholder="Filter by Order ID..." value={search}
+            onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
+          {search && <button className="ghost" onClick={() => setSearch("")}>Clear</button>}
+        </div>
+      </div>
       <div className="bd stack">
+        {search && (
+          <span className="muted" style={{ fontSize: 12 }}>{shownCount} of {totalCount} orders shown</span>
+        )}
         <div className="gantt-legend">
           <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-high" />High priority</span>
           <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-med" />Medium priority</span>
@@ -381,11 +401,15 @@ function TimelineComparison({ result }: { result: SandboxResult }) {
         </div>
         <div>
           <div className="l" style={{ marginBottom: 6 }}>Live</div>
-          <GanttChart operations={liveOps} downtime={liveDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />
+          {liveOps.length === 0
+            ? <div className="state">No operations match that Order ID filter.</div>
+            : <GanttChart operations={liveOps} downtime={liveDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />}
         </div>
         <div>
           <div className="l" style={{ marginBottom: 6, color: "var(--teal)" }}>What-if</div>
-          <GanttChart operations={whatifOps} downtime={whatifDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />
+          {whatifOps.length === 0
+            ? <div className="state">No operations match that Order ID filter.</div>
+            : <GanttChart operations={whatifOps} downtime={whatifDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />}
         </div>
       </div>
     </section>
