@@ -50,6 +50,7 @@ export function useSolve() {
                 // refresh any schedule-dependent views
                 qc.invalidateQueries({ queryKey: qk.watchlist });
                 qc.invalidateQueries({ queryKey: qk.summary });
+                qc.invalidateQueries({ queryKey: qk.gantt });
               } else {
                 setError(j.error ?? "Solve failed.");
               }
