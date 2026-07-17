@@ -37,6 +37,7 @@ class SandboxIn(BaseModel):
     mode: str = "forward"
     time_budget_s: int = 15
     overtime_hrs_per_day: int = 0
+    leveling: str = "off"
 
 
 @router.post("/simulate")
@@ -48,8 +49,10 @@ def simulate(body: SandboxIn, _: models.AppUser = Depends(require_role("planner"
         events_in = d.pop("events")
         overrides.append(OrderOverride(
             **d, events=[EventOverride(**e) for e in events_in]))
+    leveling = body.leveling if body.leveling in ("off", "soft", "strict") else "off"
     req = SandboxRequest(
         overrides=overrides,
         mode=body.mode, time_budget_s=min(body.time_budget_s, 60),
-        overtime_hrs_per_day=max(0, min(body.overtime_hrs_per_day, 12)))
+        overtime_hrs_per_day=max(0, min(body.overtime_hrs_per_day, 12)),
+        leveling=leveling)
     return run_sandbox(db, req)
