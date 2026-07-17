@@ -123,6 +123,7 @@ function DelayDrillDown({ row, onClose }: { row: DelayedOrderRow; onClose: () =>
         qc.invalidateQueries({ queryKey: ["delayed-orders"] });
         qc.invalidateQueries({ queryKey: ["kpis"] });
         qc.invalidateQueries({ queryKey: ["watchlist"] });
+        qc.invalidateQueries({ queryKey: ["gantt"] });
         toast.success(res.on_time
           ? `${row.order_id} recovered - now on time.`
           : `${row.order_id} rescheduled - recovery applied.`);
