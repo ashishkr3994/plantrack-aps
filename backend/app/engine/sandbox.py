@@ -150,6 +150,36 @@ def _milestones(order_input, res, cal):
     return stages, prod_end, delivery
 
 
+def _live_downtime(db: Session) -> list[dict]:
+    """Logged downtime affecting the current live schedule -- same query as
+    /schedule/gantt, kept here so the sandbox's live timeline panel matches
+    the real Timeline screen exactly."""
+    rows = db.execute(text("""
+        SELECT ae.event_timestamp, ae.downtime_mins, ae.downtime_reason,
+               o.order_id, oo.work_center
+        FROM actual_event ae
+        LEFT JOIN order_header o ON o.id = ae.order_id
+        LEFT JOIN order_operation oo ON oo.order_id = ae.order_id
+            AND oo.operation_seq = ae.operation_seq
+            AND oo.schedule_id = (
+                SELECT ps2.id FROM planned_schedule ps2
+                WHERE ps2.order_id = ae.order_id AND ps2.is_current
+                LIMIT 1
+            )
+        WHERE ae.event_type = 'pause' AND ae.downtime_mins > 0
+        ORDER BY ae.event_timestamp
+    """)).mappings().all()
+    out = []
+    for d in rows:
+        reason = d["downtime_reason"] or ""
+        out.append({
+            "work_center": d["work_center"], "whole_wc": reason.startswith("[WC]"),
+            "order_id": d["order_id"], "start": _iso(d["event_timestamp"]),
+            "duration_mins": d["downtime_mins"], "reason": reason,
+        })
+    return out
+
+
 def _live_snapshot(db: Session) -> dict:
     """Every order's CURRENT persisted state, read directly from the database
     -- never re-solved. This is the fix for a real bug: re-solving for 'live'
@@ -158,7 +188,7 @@ def _live_snapshot(db: Session) -> dict:
     actually produced the schedule on the real Dashboard. Reading the persisted
     row is the only way to guarantee 'live' truly matches what's live."""
     rows = db.execute(text("""
-        SELECT o.id AS pk, o.order_id, o.order_qty, o.priority,
+        SELECT o.id AS pk, o.order_id, o.order_qty, o.priority, o.customer,
                o.committed_delivery_date,
                ps.id AS sched_pk, ps.planned_material_ready_dt,
                ps.planned_prod_end_dt, ps.planned_dispatch_dt,
@@ -236,6 +266,7 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     # so it always matches the real Dashboard/Orders/Timeline exactly, however
     # it was produced (any leveling mode, a partial recovery, pinned orders). ----
     live = _live_snapshot(db)
+    downtime_live = _live_downtime(db)
     kpis_live = compute_kpis(db)   # same computation the real Dashboard uses
 
     # ---- scenario: fresh load, apply overrides + levers ----
@@ -247,6 +278,7 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     kept = []
     applied = []   # human-readable record of what the scenario changed
     extra_downtime: list[tuple] = []
+    downtime_whatif: list[dict] = []   # Gantt-friendly, for the timeline comparison
     for o in si.orders:
         ov = overrides.get(o.order_id)
         if ov and ov.exclude:
@@ -289,6 +321,11 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
                     end_min = start_min + ev.downtime_mins
                     wc = next((op.work_center for op in o.ops if op.seq == ev.operation_seq), None)
                     extra_downtime.append((wc, start_min, end_min, None if ev.whole_wc else o.pk))
+                    downtime_whatif.append({
+                        "work_center": wc, "whole_wc": ev.whole_wc, "order_id": o.order_id,
+                        "start": _iso(cal.to_datetime(start_min)), "duration_mins": ev.downtime_mins,
+                        "reason": (f"[WC] hypothetical downtime" if ev.whole_wc else "hypothetical downtime"),
+                    })
                     scope = "whole machine" if ev.whole_wc else "this order only"
                     applied.append(f"{o.order_id}: downtime {ev.downtime_mins}min on {wc} ({scope})")
         kept.append(o)
@@ -370,6 +407,7 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
 
         orders_out.append({
             "order_id": o.order_id,
+            "customer": live_row.get("customer"),
             "qty_live": live_row.get("order_qty"),
             "qty_whatif": scen_in.qty,
             "priority_live": live_row.get("priority"),
@@ -400,6 +438,8 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
         "kpis_live": kpis_live,
         "kpis_whatif": kpis_whatif,
         "orders": sorted(orders_out, key=lambda d: d["order_id"]),
+        "downtime_live": downtime_live,
+        "downtime_whatif": downtime_whatif,
         "applied_changes": applied,
         "note": ("Sandbox only - the live schedule was not modified. 'Live' figures are "
                 "read directly from the current persisted schedule (never re-solved), so "
