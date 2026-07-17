@@ -3,10 +3,11 @@ import { useOrders } from "@/hooks/queries";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Loading, Pill, PriorityPill, Modal } from "@/components/ui";
+import { GanttChart, computeSharedRange } from "@/components/GanttChart";
 import { fmtDate, fmtDateTime, fmtHours } from "@/lib/format";
 import type {
   SandboxOverride, SandboxResult, SandboxOrderResult, SandboxEventOverride,
-  SandboxScheduleStage,
+  SandboxScheduleStage, GanttOp, GanttDowntime,
 } from "@/api/types";
 
 interface RowState {
@@ -349,6 +350,48 @@ function KpiCompareCard({ label, live, whatif, unit, higherIsBetter }: {
   );
 }
 
+function TimelineComparison({ result }: { result: SandboxResult }) {
+  const orders = result.orders ?? [];
+  const [zoom, setZoom] = useState<"compact" | "comfortable" | "wide">("comfortable");
+
+  const liveOps = useMemo(() => flattenOps(orders, "live"), [orders]);
+  const whatifOps = useMemo(() => flattenOps(orders, "whatif"), [orders]);
+  const liveDowntime: GanttDowntime[] = result.downtime_live ?? [];
+  const whatifDowntime: GanttDowntime[] = result.downtime_whatif ?? [];
+
+  // shared range across BOTH sides, so the two panels align on the same X
+  // axis -- otherwise each would pick its own window and a shift wouldn't be
+  // visually comparable at a glance.
+  const range = useMemo(() => computeSharedRange([
+    { operations: liveOps, downtime: liveDowntime },
+    { operations: whatifOps, downtime: whatifDowntime },
+  ]), [liveOps, whatifOps, liveDowntime, whatifDowntime]);
+
+  if (liveOps.length === 0 && whatifOps.length === 0) return null;
+
+  return (
+    <section className="card">
+      <div className="hd">Timeline - live vs what-if</div>
+      <div className="bd stack">
+        <div className="gantt-legend">
+          <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-high" />High priority</span>
+          <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-med" />Medium priority</span>
+          <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-low" />Low priority</span>
+          <span className="gantt-legend-item"><i className="gantt-swatch gantt-swatch-downtime" />Downtime</span>
+        </div>
+        <div>
+          <div className="l" style={{ marginBottom: 6 }}>Live</div>
+          <GanttChart operations={liveOps} downtime={liveDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />
+        </div>
+        <div>
+          <div className="l" style={{ marginBottom: 6, color: "var(--teal)" }}>What-if</div>
+          <GanttChart operations={whatifOps} downtime={whatifDowntime} range={range} zoom={zoom} onZoomChange={setZoom} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Results({ result, showAll, setShowAll, page, setPage, onSelect }: {
   result: SandboxResult; showAll: boolean; setShowAll: (b: boolean) => void;
   page: number; setPage: (n: number) => void; onSelect: (o: SandboxOrderResult) => void;
@@ -398,6 +441,8 @@ function Results({ result, showAll, setShowAll, page, setPage, onSelect }: {
           <KpiCompareCard label="Capacity conflicts" live={kl.capacity_conflicts} whatif={kw.capacity_conflicts} higherIsBetter={false} />
         </div>
       )}
+
+      <TimelineComparison result={result} />
 
       <section className="card">
         <div className="hd">
@@ -480,6 +525,23 @@ function Results({ result, showAll, setShowAll, page, setPage, onSelect }: {
       {result.note && <p className="muted" style={{ fontSize: 12 }}>{result.note}</p>}
     </div>
   );
+}
+
+function flattenOps(orders: SandboxOrderResult[], side: "live" | "whatif"): GanttOp[] {
+  const out: GanttOp[] = [];
+  for (const o of orders) {
+    const stages = side === "live" ? o.schedule_live : o.schedule_whatif;
+    const priority = side === "live" ? o.priority_live : o.priority_whatif;
+    for (const s of stages) {
+      if (s.kind !== "op" || !s.start || !s.end) continue;
+      out.push({
+        work_center: s.stage, operation_seq: s.operation_seq ?? 0, start: s.start, end: s.end,
+        parallel_group: s.parallel_group ?? null, order_id: o.order_id,
+        priority: (priority ?? "MED") as GanttOp["priority"], customer: o.customer ?? "",
+      });
+    }
+  }
+  return out;
 }
 
 function mergeStages(live: SandboxScheduleStage[], whatif: SandboxScheduleStage[]) {
