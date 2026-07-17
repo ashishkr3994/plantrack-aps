@@ -42,6 +42,7 @@ export function Sandbox() {
   const [mode, setMode] = useState("forward");
   const [budget, setBudget] = useState(20);
   const [overtime, setOvertime] = useState(0);
+  const [leveling, setLeveling] = useState<"off" | "soft" | "strict">("off");
   const [result, setResult] = useState<SandboxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,8 +72,16 @@ export function Sandbox() {
     setError(null);
     setResult(null);
     const overrides: SandboxOverride[] = [];
-    for (const oid of visible) {
-      const r = rows.get(oid);
+    const visibleSet = new Set(visible);
+    for (const o of orders.data ?? []) {
+      // an order removed from the builder (or never added) must be genuinely
+      // excluded from the scenario solve -- not just hidden from the table --
+      // so "only the orders I added" is what actually gets planned.
+      if (!visibleSet.has(o.order_id)) {
+        overrides.push({ order_id: o.order_id, exclude: true });
+        continue;
+      }
+      const r = rows.get(o.order_id);
       if (!r || !r.overridden) continue;
       const events: SandboxEventOverride[] = [];
       if (r.event_type && r.event_operation_seq) {
@@ -85,7 +94,7 @@ export function Sandbox() {
         });
       }
       overrides.push({
-        order_id: oid,
+        order_id: o.order_id,
         qty: r.qty ? Number(r.qty) : undefined,
         partial_qty: r.partial_qty ? Number(r.partial_qty) : undefined,
         priority: r.priority || undefined,
@@ -97,7 +106,7 @@ export function Sandbox() {
     setBusy(true);
     setPage(0);
     try {
-      const res = await api.simulate({ overrides, mode, time_budget_s: budget, overtime_hrs_per_day: overtime });
+      const res = await api.simulate({ overrides, mode, time_budget_s: budget, overtime_hrs_per_day: overtime, leveling });
       setResult(res);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Simulation failed.");
@@ -262,6 +271,14 @@ export function Sandbox() {
               <option value="backward">Backward - from due dates</option>
             </select>
           </div>
+          <div style={{ width: 210 }}>
+            <label>Load leveling</label>
+            <select value={leveling} onChange={(e) => setLeveling(e.target.value as "off" | "soft" | "strict")} disabled={!canRun}>
+              <option value="off">Off - earliest finish</option>
+              <option value="soft">Soft - JIT, use idle time</option>
+              <option value="strict">Strict - hold to promise date</option>
+            </select>
+          </div>
           <div style={{ width: 150 }}>
             <label>Overtime (hrs/day)</label>
             <input type="number" min={0} max={12} value={overtime} disabled={!canRun}
@@ -293,6 +310,13 @@ export function Sandbox() {
       {selected && <DrillDown order={selected} onClose={() => setSelected(null)} />}
     </div>
   );
+}
+
+function levelingLabel(l: string | null | undefined): string {
+  if (l === "off") return "Off";
+  if (l === "soft") return "Soft";
+  if (l === "strict") return "Strict";
+  return "Unknown";
 }
 
 function statusTone(s: string): "ok" | "warn" | "risk" {
@@ -345,6 +369,25 @@ function Results({ result, showAll, setShowAll, page, setPage, onSelect }: {
       )}
 
       <h3 style={{ margin: 0 }}>Results - live vs what-if</h3>
+
+      {(result.leveling_live !== undefined || result.leveling_whatif) && (
+        <div className="row" style={{ gap: 10, alignItems: "center" }}>
+          <span className="muted" style={{ fontSize: 12 }}>Load leveling:</span>
+          <span className="row" style={{ gap: 6 }}>
+            <span className="muted" style={{ fontSize: 12 }}>Live</span>
+            <Pill tone="muted">{levelingLabel(result.leveling_live)}</Pill>
+          </span>
+          <span className="muted" style={{ fontSize: 11 }}>&rarr;</span>
+          <span className="row" style={{ gap: 6 }}>
+            <span className="muted" style={{ fontSize: 12 }}>What-if</span>
+            <Pill tone="info">{levelingLabel(result.leveling_whatif)}</Pill>
+          </span>
+          {result.leveling_live && result.leveling_whatif && result.leveling_live !== result.leveling_whatif && (
+            <span className="muted" style={{ fontSize: 11 }}>(different mode - some of the change below may come from this, not just your overrides)</span>
+          )}
+        </div>
+      )}
+
       {kl && kw && (
         <div className="grid kpis">
           <KpiCompareCard label="Schedule adherence" live={kl.schedule_adherence_pct} whatif={kw.schedule_adherence_pct} unit="%" higherIsBetter />
