@@ -293,6 +293,8 @@ export interface SandboxResult {
   mode: string;
   status?: string;
   message?: string;
+  leveling_live?: string | null;
+  leveling_whatif?: string;
   kpis_live?: SandboxKpis;
   kpis_whatif?: SandboxKpis;
   orders?: SandboxOrderResult[];
@@ -488,4 +490,3 @@ export interface RecommendationResult {
   bottleneck_machine?: string | null;
   message: string;
 }
-
