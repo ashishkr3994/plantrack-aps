@@ -399,6 +399,7 @@ export interface GanttOp {
 
 export interface GanttDowntime {
   work_center: string | null;
+  whole_wc: boolean;
   order_id: string | null;
   start: string;
   duration_mins: number;
