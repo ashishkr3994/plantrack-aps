@@ -13,6 +13,7 @@ export function Reschedule() {
   const canSolve = hasRole("planner");
   const [mode, setMode] = useState<SchedMode>("forward");
   const [budget, setBudget] = useState(30);
+  const [leveling, setLeveling] = useState<"off" | "soft" | "strict">("soft");
 
   return (
     <div className="stack">
@@ -26,7 +27,7 @@ export function Reschedule() {
             the CP-SAT engine. The solve runs in the background - you'll see progress here and
             connected planners are notified when it finishes.
           </p>
-          <div className="row" style={{ gap: 16 }}>
+          <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
             <div style={{ width: 220 }}>
               <label>Scheduling mode</label>
               <select value={mode} onChange={(e) => setMode(e.target.value as SchedMode)} disabled={solve.busy}>
@@ -42,18 +43,32 @@ export function Reschedule() {
                 disabled={solve.busy}
               />
             </div>
+            <div style={{ width: 260 }}>
+              <label>Load leveling</label>
+              <select value={leveling} onChange={(e) => setLeveling(e.target.value as "off" | "soft" | "strict")} disabled={solve.busy}>
+                <option value="off">Off - earliest finish</option>
+                <option value="soft">Soft - JIT, use idle time</option>
+                <option value="strict">Strict - hold to promise date</option>
+              </select>
+            </div>
             <div style={{ alignSelf: "flex-end" }}>
               {!canSolve ? (
                 <button disabled title="Requires planner role">Run optimiser</button>
               ) : !solve.busy ? (
-                <button className="primary" onClick={() => solve.start({ mode, time_budget_s: budget })}>
+                <button className="primary" onClick={() => solve.start({ mode, time_budget_s: budget, leveling })}>
                   Run optimiser
                 </button>
               ) : (
-                <button disabled>Solving</button>
+                <button disabled>Solving...</button>
               )}
             </div>
           </div>
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Leveling spreads work toward promise dates to reduce capacity conflicts,
+            without ever missing a committed date. When an order can't be met within
+            capacity it is scheduled as late as needed and flagged for an overtime
+            recommendation - the optimiser never over-utilises a machine on its own.
+          </p>
 
           <SolveProgress solve={solve} />
         </div>
@@ -72,7 +87,7 @@ function SolveProgress({ solve }: { solve: ReturnType<typeof useSolve> }) {
     return (
       <div className="banner live">
         <span className="spinner" /> &nbsp;
-        {phase === "queued" ? "Queued - starting solver" : "Solving"}{" "}
+        {phase === "queued" ? "Queued - starting solver..." : "Solving..."}{" "}
         <span className="mono">{elapsed}s elapsed</span>
         <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
           You can keep working; this runs in the background.
@@ -113,7 +128,7 @@ function SolveProgress({ solve }: { solve: ReturnType<typeof useSolve> }) {
           <span className="muted">Bottleneck: </span>
           <strong>{r.bottleneck_machine}</strong>
           {r.machine_load_min && Object.keys(r.machine_load_min).length > 0 && (
-            <span className="muted">  busiest machines: {Object.entries(r.machine_load_min).slice(0, 3).map(([m, v]) => `${m} (${v}m)`).join(", ")}</span>
+            <span className="muted"> - busiest machines: {Object.entries(r.machine_load_min).slice(0, 3).map(([m, v]) => `${m} (${v}m)`).join(", ")}</span>
           )}
         </div>
       )}
@@ -205,7 +220,7 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
           <div style={{ width: 240 }}>
             <label>Order</label>
             <select value={orderId} onChange={(e) => { setOrderId(e.target.value); setResult(null); }} disabled={!canRun}>
-              <option value="">Select an order</option>
+              <option value="">Select an order...</option>
               {orders.data?.map((o) => (
                 <option key={o.order_id} value={o.order_id}>{o.order_id} - {o.customer}</option>
               ))}
@@ -259,7 +274,7 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
 
         <div>
           <button className="primary" onClick={run} disabled={!canRun || busy}>
-            {busy ? "Recovering" : "Generate recovery plan"}
+            {busy ? "Recovering..." : "Generate recovery plan"}
           </button>
         </div>
 
@@ -270,9 +285,9 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
         {result && result.feasible && (
           <div className="banner ok">
             <strong>Recovery plan saved (version {result.version}).</strong>{" "}
-            Delivery {fmtDate(result.baseline_delivery)}  {fmtDate(result.new_delivery)} {" "}
+            Delivery {fmtDate(result.baseline_delivery)} &rarr; {fmtDate(result.new_delivery)} -{" "}
             {result.on_time ? "now on time" : `still late ${Math.round((result.lateness_min ?? 0) / 60)}h`}
-            {result.bottleneck ? `  ${result.bottleneck}` : ""}
+            {result.bottleneck ? ` - ${result.bottleneck}` : ""}
           </div>
         )}
 
@@ -280,7 +295,7 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
           <div>
             <div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>Reschedule history for {orderId}</div>
             <table>
-              <thead><tr><th className="num">Version</th><th>When</th><th>By</th><th>Options</th><th>Baseline  New delivery</th></tr></thead>
+              <thead><tr><th className="num">Version</th><th>When</th><th>By</th><th>Options</th><th>Baseline &rarr; New delivery</th></tr></thead>
               <tbody>
                 {log.data.map((r) => (
                   <tr key={r.version}>
@@ -292,9 +307,9 @@ function RecoveryPanel({ canRun }: { canRun: boolean }) {
                         (r.options as Record<string, unknown>).overtime ? `overtime ${(r.options as Record<string, unknown>).overtime_hrs}h` : null,
                         (r.options as Record<string, unknown>).partial_qty ? `partial ${(r.options as Record<string, unknown>).partial_qty}` : null,
                         `mode ${(r.options as Record<string, unknown>).mode}`,
-                      ].filter(Boolean).join("  ")}
+                      ].filter(Boolean).join(" - ")}
                     </td>
-                    <td>{fmtDate(r.baseline_delivery)}  {fmtDate(r.new_delivery)}</td>
+                    <td>{fmtDate(r.baseline_delivery)} &rarr; {fmtDate(r.new_delivery)}</td>
                   </tr>
                 ))}
               </tbody>
