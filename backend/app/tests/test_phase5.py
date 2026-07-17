@@ -129,6 +129,9 @@ def test_sandbox_does_not_touch_live(planner_client):
 
 
 def test_sandbox_overtime_and_partial_qty_levers(planner_client):
+    # a live schedule must exist first -- 'live' is read from the persisted
+    # schedule now, not re-solved, so there's nothing to read otherwise
+    planner_client.post("/schedule/solve", json={"time_budget_s": 10})
     # backward mode + overtime + partial qty should run and return dates
     r = planner_client.post("/sandbox/simulate", json={
         "mode": "backward", "time_budget_s": 10, "overtime_hrs_per_day": 4,
@@ -207,3 +210,32 @@ def test_sandbox_infeasible_scenario_reports_clearly(planner_client):
     # infeasible clearly -- either way it must not silently omit the message
     if not body["feasible"]:
         assert "message" in body and body["message"]
+
+
+def test_sandbox_live_matches_persisted_schedule_exactly(planner_client):
+    """Regression test for a real bug: 'live' figures were computed by
+    re-solving from scratch with the solver's default leveling ('off'), which
+    can differ substantially from whatever leveling mode actually produced the
+    persisted schedule (soft is the Reschedule screen's default) -- so 'live'
+    silently diverged from the real Dashboard. 'Live' must now be read
+    directly from the persisted planned_schedule row, never re-solved, so it
+    always matches exactly regardless of leveling mode."""
+    # solve with 'soft' leveling, same as the Reschedule screen's default --
+    # deliberately NOT the solver's internal default ('off'), so a re-solve
+    # bug would be caught here.
+    planner_client.post("/schedule/solve", json={"time_budget_s": 10, "leveling": "soft"})
+    real = planner_client.get("/schedule/orders/ORD-4312").json()["schedule"]
+
+    r = planner_client.post("/sandbox/simulate", json={
+        "mode": "forward", "time_budget_s": 10, "overrides": [],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    order = next(o for o in body["orders"] if o["order_id"] == "ORD-4312")
+    assert order["planned_delivery_live"] == real["planned_delivery_dt"]
+
+    # KPIs must match the real dashboard's own KPI computation exactly too
+    dash_kpis = planner_client.get("/dashboard/kpis").json()
+    for key in ("schedule_adherence_pct", "on_time_delivery_pct", "orders_at_risk",
+                "delayed_critical", "material_at_risk", "capacity_conflicts"):
+        assert body["kpis_live"][key] == dash_kpis[key]
