@@ -143,9 +143,11 @@ export function Timeline() {
                       {(downtimeByWc.get(wc) ?? []).map((d, i) => {
                         const left = xFor(d.start);
                         const width = Math.max(6, (d.duration_mins / 60) * pxPerHour);
+                        const cleanReason = d.reason.replace(/^\[.*?\]\s*/, "") || "logged pause";
+                        const scope = d.whole_wc ? "whole machine down" : `${d.order_id ?? "this order"} only`;
                         return (
                           <div key={`dt-${i}`} className="gantt-downtime" style={{ left, width }}
-                            title={`Downtime: ${d.reason.replace(/^\[.*?\]\s*/, "") || "logged pause"}`} />
+                            title={`Downtime (${scope}): ${cleanReason}`} />
                         );
                       })}
                       {(opsByWc.get(wc) ?? []).map((op, i) => {
@@ -172,8 +174,8 @@ export function Timeline() {
 
       {unplacedDowntimeCount > 0 && (
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          {unplacedDowntimeCount} logged order-level pause{unplacedDowntimeCount > 1 ? "s" : ""} not shown on the
-          timeline (they affect one order's operations rather than a whole machine).
+          {unplacedDowntimeCount} logged pause{unplacedDowntimeCount > 1 ? "s" : ""} couldn't be matched to a
+          machine on the current schedule (the referenced operation may no longer exist) and aren't shown.
         </p>
       )}
 
