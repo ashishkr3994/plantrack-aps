@@ -31,6 +31,7 @@ from sqlalchemy import text
 from .loader import load_scheduling_input, PACK_DAYS, DISPATCH_DAYS, TRANSPORT_DAYS
 from .cpsat_engine import solve as cpsat_solve
 from .deviation import _thr
+from .kpi import compute_kpis
 
 DEFAULT_AVAILABLE_MIN = 600  # single plant, one 10h shift -- mirrors capacity.py
 
@@ -64,6 +65,7 @@ class SandboxRequest:
     mode: str = "forward"
     time_budget_s: int = 15
     overtime_hrs_per_day: int = 0          # extra working hours/day (plan lever)
+    leveling: str = "off"                  # 'off' | 'soft' | 'strict' -- what-if side only
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -148,17 +150,95 @@ def _milestones(order_input, res, cal):
     return stages, prod_end, delivery
 
 
+def _live_snapshot(db: Session) -> dict:
+    """Every order's CURRENT persisted state, read directly from the database
+    -- never re-solved. This is the fix for a real bug: re-solving for 'live'
+    used the solver's default leveling ('off', pure earliest-finish), which
+    can differ substantially from whatever leveling mode (or recovery action)
+    actually produced the schedule on the real Dashboard. Reading the persisted
+    row is the only way to guarantee 'live' truly matches what's live."""
+    rows = db.execute(text("""
+        SELECT o.id AS pk, o.order_id, o.order_qty, o.priority,
+               o.committed_delivery_date,
+               ps.id AS sched_pk, ps.planned_material_ready_dt,
+               ps.planned_prod_end_dt, ps.planned_dispatch_dt,
+               ps.planned_delivery_dt, ps.buffer_hrs
+        FROM order_header o
+        LEFT JOIN planned_schedule ps ON ps.order_id = o.id AND ps.is_current
+    """)).mappings().all()
+    return {r["order_id"]: dict(r) for r in rows}
+
+
+def _live_ops(db: Session, pk: int | None, sched_pk: int | None):
+    if pk is None or sched_pk is None:
+        return []
+    return db.execute(text("""
+        SELECT operation_seq, work_center, parallel_group, planned_start, planned_end
+        FROM order_operation WHERE order_id = :pk AND schedule_id = :sid
+        ORDER BY operation_seq
+    """), {"pk": pk, "sid": sched_pk}).mappings().all()
+
+
+def _live_stages(row: dict, ops) -> list[dict]:
+    """Stage-by-stage chain built entirely from persisted columns/rows --
+    same shape as _milestones, so the frontend renders both sides identically."""
+    if row.get("sched_pk") is None:
+        return []
+    stages = [{
+        "stage": "Material ready", "kind": "milestone",
+        "start": _iso(row["planned_material_ready_dt"]), "end": None,
+    }]
+    for op in ops:
+        stages.append({
+            "stage": op["work_center"], "kind": "op", "operation_seq": op["operation_seq"],
+            "parallel_group": op["parallel_group"],
+            "start": _iso(op["planned_start"]), "end": _iso(op["planned_end"]),
+        })
+    if row.get("planned_prod_end_dt"):
+        stages.append({"stage": "Production end", "kind": "milestone", "start": None,
+                       "end": _iso(row["planned_prod_end_dt"])})
+        stages.append({"stage": "Dispatch", "kind": "milestone",
+                       "start": _iso(row["planned_prod_end_dt"]), "end": _iso(row["planned_dispatch_dt"])})
+        stages.append({"stage": "Delivery", "kind": "milestone", "start": None,
+                       "end": _iso(row["planned_delivery_dt"])})
+    return stages
+
+
+def _date_differs(a, b) -> bool:
+    if a is None and b is None:
+        return False
+    if (a is None) != (b is None):
+        return True
+    return a.date() != b.date()
+
+
+def _last_solve_leveling(db: Session) -> str | None:
+    """Best-effort: the leveling mode used in the most recent full solve, read
+    from the audit log (no dedicated column persists this on planned_schedule
+    itself). This reflects the last FULL solve specifically -- if a single
+    order was since adjusted by a targeted recovery, that order's schedule may
+    not trace to this mode, so it's labelled as a best-effort indicator, not a
+    per-order guarantee."""
+    row = db.execute(text("""
+        SELECT detail->>'leveling' FROM audit_log
+        WHERE action = 'solve' AND entity_type = 'schedule'
+        ORDER BY at DESC LIMIT 1
+    """)).scalar()
+    return row
+
+
 def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     thresholds = _thresholds(db)
     available_min = _available_min(db)
     material_at_risk = _material_at_risk(db)  # same both sides -- see module docstring
 
-    # ---- baseline: the live plan, untouched, default working day ----
-    si_base = load_scheduling_input(db)
-    base_cal = si_base.calendar
-    baseline = cpsat_solve(si_base, max_seconds=req.time_budget_s)
+    # ---- live: read the ACTUAL persisted schedule directly. Never re-solved,
+    # so it always matches the real Dashboard/Orders/Timeline exactly, however
+    # it was produced (any leveling mode, a partial recovery, pinned orders). ----
+    live = _live_snapshot(db)
+    kpis_live = compute_kpis(db)   # same computation the real Dashboard uses
 
-    # ---- scenario: reload fresh, apply overrides + levers ----
+    # ---- scenario: fresh load, apply overrides + levers ----
     minutes_per_day = 960 + max(0, int(req.overtime_hrs_per_day)) * 60
     si = load_scheduling_input(db, minutes_per_day=minutes_per_day)
     cal = si.calendar
@@ -217,21 +297,20 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     if req.overtime_hrs_per_day:
         applied.append(f"overtime: +{req.overtime_hrs_per_day}h/day")
 
-    scenario = cpsat_solve(si, max_seconds=req.time_budget_s)
+    scenario = cpsat_solve(si, max_seconds=req.time_budget_s, leveling=req.leveling)
 
-    if not baseline.feasible or not scenario.feasible:
+    if not scenario.feasible:
         return {
             "feasible": False,
             "mode": req.mode,
-            "status": scenario.status if not scenario.feasible else baseline.status,
-            "message": ("The live schedule itself is infeasible right now." if not baseline.feasible
-                       else "This scenario has no feasible schedule with these overrides -- "
-                            "try relaxing a due date, quantity, or excluding an order."),
+            "status": scenario.status,
+            "message": ("This scenario has no feasible schedule with these overrides -- "
+                       "try relaxing a due date, quantity, or excluding an order."),
             "applied_changes": applied,
         }
 
-    # ---- KPIs: baseline vs scenario, computed in memory (nothing persisted) ----
-    def kpis_for(res, cal_):
+    # ---- KPIs for the what-if side, computed in memory (nothing persisted) ----
+    def kpis_for_whatif(res, cal_):
         buckets = {"on": 0, "risk": 0, "delay": 0, "crit": 0}
         for o in res.orders:
             buckets[_classify(o.lateness_min, None, thresholds)] += 1
@@ -252,29 +331,23 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
             "capacity_conflicts": _capacity_conflicts(res, cal_, available_min),
         }
 
-    kpis_live = kpis_for(baseline, base_cal)
-    kpis_whatif = kpis_for(scenario, cal)
+    kpis_whatif = kpis_for_whatif(scenario, cal)
 
     # ---- per-order comparison ----
-    base_orders = {o.order_id: o for o in baseline.orders}
-    base_input_by_id = {o.order_id: o for o in si_base.orders}
     scen_input_by_id = {o.order_id: o for o in si.orders}
 
     orders_out = []
     for o in scenario.orders:
-        b = base_orders.get(o.order_id)
         scen_in = scen_input_by_id.get(o.order_id)
-        base_in = base_input_by_id.get(o.order_id)
         if scen_in is None:
             continue
-
-        stages_live, _pe_live, delivery_live = (
-            _milestones(base_in, baseline, base_cal) if base_in else ([], None, None))
+        live_row = live.get(o.order_id, {})
+        live_ops = _live_ops(db, live_row.get("pk"), live_row.get("sched_pk"))
+        stages_live = _live_stages(live_row, live_ops)
         stages_whatif, _pe_whatif, delivery_whatif = _milestones(scen_in, scenario, cal)
 
-        buffer_live_hrs = (
-            (base_in.committed_due_dt - delivery_live).total_seconds() / 3600
-            if (base_in and delivery_live) else None)
+        buffer_live_hrs = (float(live_row["buffer_hrs"])
+                          if live_row.get("buffer_hrs") is not None else None)
         buffer_whatif_hrs = (
             (scen_in.committed_due_dt - delivery_whatif).total_seconds() / 3600
             if delivery_whatif else None)
@@ -283,10 +356,13 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
         risk_signal_whatif = o.bottleneck if status_whatif != "on" else None
 
         ov = overrides.get(o.order_id)
+        committed_live_date = live_row.get("committed_delivery_date")
         changed = bool(
-            (b and b.lateness_min != o.lateness_min)
-            or (base_in and (base_in.qty != scen_in.qty or base_in.priority != scen_in.priority
-                            or base_in.committed_due_dt != scen_in.committed_due_dt))
+            (live_row.get("order_qty") != scen_in.qty)
+            or (live_row.get("priority") != scen_in.priority)
+            or (committed_live_date is not None
+                and committed_live_date.isoformat() != scen_in.committed_due_dt.date().isoformat())
+            or _date_differs(live_row.get("planned_delivery_dt"), delivery_whatif)
             or (buffer_live_hrs is not None and buffer_whatif_hrs is not None
                 and round(buffer_live_hrs) != round(buffer_whatif_hrs))
             or bool(ov and ov.events)
@@ -294,17 +370,13 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
 
         orders_out.append({
             "order_id": o.order_id,
-            "qty_live": base_in.qty if base_in else None,
+            "qty_live": live_row.get("order_qty"),
             "qty_whatif": scen_in.qty,
-            "priority_live": base_in.priority if base_in else None,
+            "priority_live": live_row.get("priority"),
             "priority_whatif": scen_in.priority,
-            # committed date is displayed as a plain calendar date, never the
-            # internal end-of-day (23:59 UTC) timestamp used for buffer math --
-            # sending that as-is shifts into the next day once a browser in a
-            # timezone ahead of UTC renders it locally.
-            "committed_live": base_in.committed_due_dt.date().isoformat() if base_in else None,
+            "committed_live": committed_live_date.isoformat() if committed_live_date else None,
             "committed_whatif": scen_in.committed_due_dt.date().isoformat(),
-            "planned_delivery_live": _iso(delivery_live),
+            "planned_delivery_live": _iso(live_row.get("planned_delivery_dt")),
             "planned_delivery_whatif": _iso(delivery_whatif),
             "buffer_hrs_live": round(buffer_live_hrs, 1) if buffer_live_hrs is not None else None,
             "buffer_hrs_whatif": round(buffer_whatif_hrs, 1) if buffer_whatif_hrs is not None else None,
@@ -323,12 +395,17 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     return {
         "feasible": True,
         "mode": req.mode,
+        "leveling_live": _last_solve_leveling(db),
+        "leveling_whatif": req.leveling,
         "kpis_live": kpis_live,
         "kpis_whatif": kpis_whatif,
         "orders": sorted(orders_out, key=lambda d: d["order_id"]),
         "applied_changes": applied,
-        "note": ("Sandbox only - the live schedule was not modified. Material-at-risk "
-                "is unaffected by scenario overrides, so it reports the live figure "
-                "on both sides."),
-        "baseline_order_count": len(si_base.orders),
+        "note": ("Sandbox only - the live schedule was not modified. 'Live' figures are "
+                "read directly from the current persisted schedule (never re-solved), so "
+                "they always match the real Dashboard. Material-at-risk is unaffected by "
+                "scenario overrides, so it reports the live figure on both sides. "
+                "'Live leveling' reflects the most recent full solve -- if a single order "
+                "was since adjusted by a targeted recovery, that order may not trace to it."),
+        "baseline_order_count": len(live),
     }
