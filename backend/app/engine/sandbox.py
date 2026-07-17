@@ -298,8 +298,12 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
             "qty_whatif": scen_in.qty,
             "priority_live": base_in.priority if base_in else None,
             "priority_whatif": scen_in.priority,
-            "committed_live": _iso(base_in.committed_due_dt) if base_in else None,
-            "committed_whatif": _iso(scen_in.committed_due_dt),
+            # committed date is displayed as a plain calendar date, never the
+            # internal end-of-day (23:59 UTC) timestamp used for buffer math --
+            # sending that as-is shifts into the next day once a browser in a
+            # timezone ahead of UTC renders it locally.
+            "committed_live": base_in.committed_due_dt.date().isoformat() if base_in else None,
+            "committed_whatif": scen_in.committed_due_dt.date().isoformat(),
             "planned_delivery_live": _iso(delivery_live),
             "planned_delivery_whatif": _iso(delivery_whatif),
             "buffer_hrs_live": round(buffer_live_hrs, 1) if buffer_live_hrs is not None else None,
