@@ -389,9 +389,21 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
   position: absolute; top: 6px; bottom: 6px; border-radius: 6px;
   border: none; cursor: pointer; padding: 0 6px; text-align: left;
   box-shadow: 0 1px 2px rgba(0,0,0,0.12);
-  transition: filter 0.12s ease;
+  transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+  z-index: 1; /* below .gantt-downtime (5) so a mid-operation outage always shows */
 }
-.gantt-block:hover { filter: brightness(1.08); }
+/* Hover feedback: deepen the block's own colour (darker shade in light mode,
+   lighter in dark mode, via filter so it never fights the background overrides
+   below), lift it off the row like a raised chip, and bring its label to full
+   bold -- all while the priority colour itself stays correct and visible. */
+.gantt-block:hover {
+  filter: brightness(0.86);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.28);
+  z-index: 2; /* lifts above sibling blocks while hovered, still below downtime (5) */
+}
+[data-theme="dark"] .gantt-block:hover { filter: brightness(1.22); }
+.gantt-block:hover .gantt-block-label { font-weight: 800; }
 .gantt-block-high { background: #5b3fbf; }
 .gantt-block-med  { background: var(--teal); }
 .gantt-block-low  { background: #94a3b8; }
@@ -408,10 +420,18 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
   color: #fff; font-size: 11px; font-weight: 650; line-height: 1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   display: block; padding-top: 1px;
+  transition: font-weight 0.12s ease;
 }
 
 .gantt-downtime {
   position: absolute; top: 2px; bottom: 2px; border-radius: 4px;
   background: repeating-linear-gradient(45deg, #f6b8b0, #f6b8b0 3px, #fbeceb 3px, #fbeceb 6px);
-  border: 1px solid #e8a79c; z-index: 0;
+  border: 1px solid #e8a79c; z-index: 5;
+  /* Downtime overlaps operations that fall inside the outage window on the
+     same machine row. Both are absolutely positioned, and z-index:auto on the
+     operation block sits at the same stacking level as z-index:0 -- so without
+     an explicit HIGHER z-index here, the operation's solid colour paints over
+     and completely hides the downtime bar, even though the data is correct.
+     A logged outage is the more urgent thing to see, so it must always render
+     on top, regardless of DOM order. */
 }
