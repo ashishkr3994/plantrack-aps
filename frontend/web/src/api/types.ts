@@ -270,6 +270,7 @@ export interface SandboxScheduleStage {
 
 export interface SandboxOrderResult {
   order_id: string;
+  customer?: string | null;
   qty_live: number | null;
   qty_whatif: number;
   priority_live: string | null;
@@ -298,6 +299,8 @@ export interface SandboxResult {
   kpis_live?: SandboxKpis;
   kpis_whatif?: SandboxKpis;
   orders?: SandboxOrderResult[];
+  downtime_live?: GanttDowntime[];
+  downtime_whatif?: GanttDowntime[];
   applied_changes: string[];
   note?: string;
   baseline_order_count?: number;
