@@ -135,6 +135,10 @@ def _milestones(order_input, res, cal):
             "parallel_group": op.parallel_group,
             "start": _iso(cal.to_datetime(op.start_min)),
             "end": _iso(cal.to_datetime(op.end_min)),
+            # true processing time (working-minutes) -- see run_sandbox
+            # docstring for why (end - start) alone is unreliable across a
+            # shift/day boundary.
+            "duration_min": op.duration_min,
         })
     prod_end = delivery = None
     if ops:
@@ -203,7 +207,7 @@ def _live_ops(db: Session, pk: int | None, sched_pk: int | None):
     if pk is None or sched_pk is None:
         return []
     return db.execute(text("""
-        SELECT operation_seq, work_center, parallel_group, planned_start, planned_end
+        SELECT operation_seq, work_center, parallel_group, planned_start, planned_end, duration_mins
         FROM order_operation WHERE order_id = :pk AND schedule_id = :sid
         ORDER BY operation_seq
     """), {"pk": pk, "sid": sched_pk}).mappings().all()
@@ -223,6 +227,10 @@ def _live_stages(row: dict, ops) -> list[dict]:
             "stage": op["work_center"], "kind": "op", "operation_seq": op["operation_seq"],
             "parallel_group": op["parallel_group"],
             "start": _iso(op["planned_start"]), "end": _iso(op["planned_end"]),
+            # true processing time (working-minutes), stored independently of
+            # the wall-clock start/end -- see run_sandbox docstring for why
+            # (end - start) alone is unreliable across a shift/day boundary.
+            "duration_min": float(op["duration_mins"]) if op["duration_mins"] is not None else None,
         })
     if row.get("planned_prod_end_dt"):
         stages.append({"stage": "Production end", "kind": "milestone", "start": None,
@@ -270,7 +278,14 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
     kpis_live = compute_kpis(db)   # same computation the real Dashboard uses
 
     # ---- scenario: fresh load, apply overrides + levers ----
-    minutes_per_day = 960 + max(0, int(req.overtime_hrs_per_day)) * 60
+    # baseline shift length MUST match the real solve's own default (600 min,
+    # a 10h shift -- see load_scheduling_input's default) or every comparison
+    # here silently runs on a different working day than the real shop. This
+    # was a real, confirmed bug: hardcoding a different baseline made every
+    # what-if scenario simulate a longer shift than reality regardless of the
+    # overtime lever, making what-if durations look artificially shorter than
+    # live purely from a shift-length mismatch, not from any real difference.
+    minutes_per_day = 600 + max(0, int(req.overtime_hrs_per_day)) * 60
     si = load_scheduling_input(db, minutes_per_day=minutes_per_day)
     cal = si.calendar
     overrides = {ov.order_id: ov for ov in req.overrides}
