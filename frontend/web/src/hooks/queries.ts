@@ -17,6 +17,7 @@ export const qk = {
   events: (oid?: number) => ["events", oid] as const,
   orderSchedule: (oid: string) => ["orderSchedule", oid] as const,
   gantt: ["gantt"] as const,
+  openAlerts: ["alerts", "open"] as const,
 };
 
 export const useSummary = () => useQuery({ queryKey: qk.summary, queryFn: api.summary });
