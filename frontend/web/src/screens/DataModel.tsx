@@ -8,7 +8,7 @@ function cellText(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "boolean") return v ? "yes" : "no";
   const s = String(v);
-  return s.length > 60 ? s.slice(0, 57) + "…" : s;
+  return s.length > 60 ? s.slice(0, 57) + "" : s;
 }
 
 export function DataModel() {
@@ -17,7 +17,6 @@ export function DataModel() {
 
   return (
     <div className="stack">
-      <h2>Data model</h2>
       <p className="muted" style={{ margin: 0 }}>
         Every table in the system with its live row count. Click a table to view its rows.
       </p>
@@ -25,7 +24,7 @@ export function DataModel() {
       <section className="card">
         <div className="hd">
           Tables
-          {tables.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing…</span>}
+          {tables.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing</span>}
         </div>
         <div className="bd" style={{ padding: 0 }}>
           {tables.isLoading && <Loading />}
@@ -38,8 +37,8 @@ export function DataModel() {
                   <tr key={t.table} style={{ cursor: "pointer" }} onClick={() => setOpen(t.table)} title="View rows">
                     <td className="mono">{t.table}</td>
                     <td>{t.description}</td>
-                    <td className="num"><strong>{t.row_count ?? "—"}</strong></td>
-                    <td style={{ color: "var(--teal)", fontSize: 12 }}>view →</td>
+                    <td className="num"><strong>{t.row_count ?? "-"}</strong></td>
+                    <td style={{ color: "var(--teal)", fontSize: 12 }}>view </td>
                   </tr>
                 ))}
               </tbody>
@@ -58,7 +57,7 @@ function TableRowsModal({ table, onClose }: { table: string; onClose: () => void
   const d = q.data;
   return (
     <Modal
-      title={`${table}${d ? ` — ${d.total} rows` : ""}`}
+      title={`${table}${d ? ` - ${d.total} rows` : ""}`}
       onClose={onClose}
       footer={
         <>
@@ -69,7 +68,7 @@ function TableRowsModal({ table, onClose }: { table: string; onClose: () => void
         </>
       }
     >
-      {q.isLoading && <Loading label="Loading rows…" />}
+      {q.isLoading && <Loading label="Loading rows" />}
       {d && (
         <div style={{ overflowX: "auto", maxHeight: "65vh" }}>
           {d.rows.length === 0 ? (
