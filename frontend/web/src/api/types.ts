@@ -138,6 +138,7 @@ export interface WatchlistRow {
   schedule_status: string | null;
   material_status: string | null;
   planned_delivery_dt: string | null;
+  work_centers: string[] | null;
 }
 
 // --- scheduling / async solve ---
@@ -371,6 +372,15 @@ export interface DashboardKpis {
   capacity_conflicts: number;
   open_alerts: number;
   last_updated?: string | null;
+  trend?: Partial<Record<
+    "schedule_adherence_pct" | "on_time_delivery_pct" | "orders_at_risk" |
+    "delayed_critical" | "unconfirmed" | "material_at_risk" | "capacity_conflicts", number>>;
+}
+
+export interface DashboardDigest {
+  new: string[];
+  resolved: string[];
+  since: string | null;
 }
 
 export interface KpiReason { type: "time" | "buffer" | "material" | "capacity"; text: string; }
