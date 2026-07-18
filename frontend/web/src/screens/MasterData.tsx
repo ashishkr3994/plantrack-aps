@@ -26,7 +26,7 @@ const IMPORTERS: Record<Entity, (csv: string) => Promise<ImportResultT>> = {
   routings: api.importRoutings,
 };
 
-export function MasterData() {
+export function MasterDataImportPanel() {
   const { hasRole } = useAuth();
   const canImport = hasRole("planner");
   const qc = useQueryClient();
@@ -73,9 +73,6 @@ export function MasterData() {
 
   return (
     <div className="stack">
-      <h2>Master data</h2>
-
-      <LeadTimesEditor />
       <p className="muted" style={{ margin: 0 }}>
         Download the current plant calendar, lead-time master, and routing & operations,
         grab a blank template, or import updated data - all in one place.
@@ -155,7 +152,7 @@ export function MasterData() {
   );
 }
 
-function LeadTimesEditor() {
+export function LeadTimesEditor() {
   const { hasRole } = useAuth();
   const canEdit = hasRole("planner");
   const qc = useQueryClient();
