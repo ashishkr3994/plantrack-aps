@@ -17,7 +17,7 @@ export function Configuration() {
   return (
     <div className="stack">
       <div className="spread">
-        <h2>Configuration</h2>
+        <div />
         {canEdit && <button className="primary" onClick={() => setCreatingRouting(true)}>New routing</button>}
       </div>
 
@@ -82,8 +82,8 @@ function RoutingCard({ routing }: { routing: Routing }) {
                   <td className="num">{op.run_per_unit_min ?? 0}</td>
                   <td className="num">{op.queue_min ?? 0}</td>
                   <td className="num">{op.move_min ?? 0}</td>
-                  <td className="num">{op.predecessor_seq ?? "—"}</td>
-                  <td>{op.parallel_group ? <Pill tone="info">{op.parallel_group}</Pill> : "—"}</td>
+                  <td className="num">{op.predecessor_seq ?? "-"}</td>
+                  <td>{op.parallel_group ? <Pill tone="info">{op.parallel_group}</Pill> : "-"}</td>
                   <td>
                     <div className="row" style={{ gap: 6 }}>
                       <button className="ghost" onClick={() => setEditingOp(op)}>Edit</button>
@@ -109,7 +109,7 @@ function RoutingCard({ routing }: { routing: Routing }) {
               <button onClick={() => setConfirmDeleteRouting(false)} disabled={delRouting.isPending}>Cancel</button>
               <button className="primary danger" disabled={delRouting.isPending}
                 onClick={async () => { await delRouting.mutateAsync(routing.id); setConfirmDeleteRouting(false); }}>
-                {delRouting.isPending ? "Deleting…" : "Delete routing"}
+                {delRouting.isPending ? "Deleting" : "Delete routing"}
               </button>
             </>
           }
@@ -127,7 +127,7 @@ function RoutingCard({ routing }: { routing: Routing }) {
               <button onClick={() => setConfirmDeleteOp(null)} disabled={delOp.isPending}>Cancel</button>
               <button className="primary danger" disabled={delOp.isPending}
                 onClick={async () => { await delOp.mutateAsync({ routingPk: routing.id, opPk: confirmDeleteOp.id }); setConfirmDeleteOp(null); }}>
-                {delOp.isPending ? "Deleting…" : "Delete"}
+                {delOp.isPending ? "Deleting" : "Delete"}
               </button>
             </>
           }
@@ -165,7 +165,7 @@ function RoutingModal({ onClose }: { onClose: () => void }) {
         <>
           <button onClick={onClose} disabled={create.isPending}>Cancel</button>
           <button className="primary" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? "Creating…" : "Create routing"}
+            {create.isPending ? "Creating" : "Create routing"}
           </button>
         </>
       }
@@ -266,7 +266,7 @@ function OperationModal({
         <>
           <button onClick={onClose} disabled={busy}>Cancel</button>
           <button className="primary" onClick={submit} disabled={busy}>
-            {busy ? "Saving…" : isEdit ? "Save changes" : "Add operation"}
+            {busy ? "Saving" : isEdit ? "Save changes" : "Add operation"}
           </button>
         </>
       }
