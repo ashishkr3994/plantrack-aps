@@ -174,9 +174,21 @@ export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: 
               <tr><td className="muted">Operation seq</td><td>{selected.operation_seq}</td></tr>
               <tr><td className="muted">Start</td><td>{fmtDateTime(selected.start)}</td></tr>
               <tr><td className="muted">End</td><td>{fmtDateTime(selected.end)}</td></tr>
-              <tr><td className="muted">Duration</td><td>{fmtHours(
+              <tr><td className="muted">Scheduled window</td><td>{fmtHours(
                 (new Date(selected.end).getTime() - new Date(selected.start).getTime()) / 3_600_000)}</td></tr>
+              {selected.busy_hrs != null && (
+                <tr><td className="muted">Busy time</td><td>{fmtHours(selected.busy_hrs)}</td></tr>
+              )}
             </tbody></table>
+            {selected.busy_hrs != null && (
+              (new Date(selected.end).getTime() - new Date(selected.start).getTime()) / 3_600_000
+              - selected.busy_hrs > 1 && (
+                <p className="muted" style={{ margin: 0, fontSize: 11.5 }}>
+                  The scheduled window is longer than the busy time because this operation spans a
+                  shift/overnight gap -- the machine wasn't actually working the whole time.
+                </p>
+              )
+            )}
           </div>
         </Modal>
       )}
