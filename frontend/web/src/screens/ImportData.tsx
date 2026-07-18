@@ -55,14 +55,13 @@ export function ImportData() {
 
   return (
     <div className="stack">
-      <h2>Import data</h2>
       {!canImport && <div className="banner err">Importing requires the planner role. You can view templates below.</div>}
 
       <section className="card">
         <div className="hd">CSV import</div>
         <div className="bd stack">
           <p className="muted" style={{ margin: 0 }}>
-            Bring in orders, products, or bills of materials from CSV — the data feed
+            Bring in orders, products, or bills of materials from CSV - the data feed
             for now, standing in for an ERP connection. Imports skip rows whose key
             already exists, and report any row-level problems.
           </p>
@@ -101,7 +100,7 @@ export function ImportData() {
                 </button>
               </div>
               <button className="primary" onClick={run} disabled={!canImport || busy}>
-                {busy ? "Importing…" : `Import ${LABELS[kind].toLowerCase()}`}
+                {busy ? "Importing" : `Import ${LABELS[kind].toLowerCase()}`}
               </button>
             </div>
           </div>
@@ -124,7 +123,7 @@ export function ImportData() {
         <div className="hd">Export current data</div>
         <div className="bd stack">
           <p className="muted" style={{ margin: 0 }}>
-            Download what's in the system now as CSV — useful for backups, sharing,
+            Download what's in the system now as CSV - useful for backups, sharing,
             or re-importing into another environment.
           </p>
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -158,4 +157,3 @@ export function ImportData() {
     </div>
   );
 }
-
