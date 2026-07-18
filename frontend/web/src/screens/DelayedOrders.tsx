@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,6 +22,20 @@ export function DelayedOrders() {
   const q = useQuery({ queryKey: ["delayed-orders"], queryFn: api.delayedOrders });
   const overtime = useQuery({ queryKey: ["overtime-recs"], queryFn: api.overtimeRecommendations });
   const [open, setOpen] = useState<DelayedOrderRow | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // arriving from the Dashboard's "Delayed & critical" panel with ?order=X
+  // opens straight to that order's "why is this critical" drill-down.
+  useEffect(() => {
+    const target = searchParams.get("order");
+    if (target && q.data) {
+      const row = q.data.find((r) => r.order_id === target);
+      if (row) {
+        setOpen(row);
+        setSearchParams((p) => { p.delete("order"); return p; }, { replace: true });
+      }
+    }
+  }, [searchParams, q.data, setSearchParams]);
 
   return (
     <div className="stack">
