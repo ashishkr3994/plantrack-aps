@@ -1,262 +1,95 @@
-import { useState, useEffect } from "react";
-import { NavLink, Route, Routes, Navigate } from "react-router-dom";
-import { useLiveUpdates } from "./hooks/useLiveUpdates";
-import { useAuth } from "./hooks/useAuth";
-import { api, ApiError } from "./api/client";
-import { Modal } from "./components/ui";
-import { Login } from "./screens/Login";
-import { Dashboard } from "./screens/Dashboard";
-import { Orders } from "./screens/Orders";
-import { Schedule } from "./screens/Schedule";
-import { Timeline } from "./screens/Timeline";
-import { Capacity } from "./screens/Capacity";
-import { Materials } from "./screens/Materials";
-import { Reschedule } from "./screens/Reschedule";
-import { Events } from "./screens/Events";
-import { DataModel } from "./screens/DataModel";
-import { DelayedOrders } from "./screens/DelayedOrders";
-import { MasterData } from "./screens/MasterData";
-import { Analytics } from "./screens/Analytics";
-import { Configuration } from "./screens/Configuration";
-import { Admin } from "./screens/Admin";
-import { Alerts } from "./screens/Alerts";
-import { ImportData } from "./screens/ImportData";
-import { Sandbox } from "./screens/Sandbox";
+// Live updates over WebSocket. Connects to the backend hub, surfaces connection
+// state, and invalidates the relevant React Query caches when the server pushes
+// an event (e.g. a solve finished, an alert was raised) so connected planners
+// see changes without manual refresh. Auto-reconnects with backoff.
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { qk } from "./queries";
 
-const NAV: Array<{ to: string; label: string }> = [
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/alerts", label: "Alerts" },
-  { to: "/orders", label: "Orders" },
-  { to: "/schedule", label: "Schedule" },
-  { to: "/timeline", label: "Timeline" },
-  { to: "/capacity", label: "Capacity" },
-  { to: "/materials", label: "Materials & BOM" },
-  { to: "/reschedule", label: "Reschedule" },
-  { to: "/delayed", label: "Delayed & critical" },
-  { to: "/events", label: "Execution events" },
-  { to: "/analytics", label: "Analytics" },
-  { to: "/sandbox", label: "What-if sandbox" },
-  { to: "/import", label: "Import data" },
-  { to: "/configuration", label: "Configuration" },
-  { to: "/master-data", label: "Master data" },
-  { to: "/data-model", label: "Data model" },
-];
+export type LiveStatus = "connecting" | "live" | "offline";
 
-function LiveBadge() {
-  const { status } = useLiveUpdates();
-  const tone = status === "live" ? "ok" : status === "connecting" ? "warn" : "muted";
-  const label = status === "live" ? "Live" : status === "connecting" ? "Connecting..." : "Offline";
-  return <span className={`pill ${tone}`} title="Live update connection">{label}</span>;
+interface ServerEvent {
+  type: "schedule_updated" | "alert_raised" | "order_changed" | "ping";
+  payload?: Record<string, unknown>;
 }
 
-function Clock() {
-  const [now, setNow] = useState(new Date());
+function wsUrl(): string {
+  const base = import.meta.env.VITE_WS_URL as string | undefined;
+  if (base) return base;
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/ws`;
+}
+
+export function useLiveUpdates() {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState<LiveStatus>("connecting");
+  const [lastEvent, setLastEvent] = useState<ServerEvent | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const retry = useRef(0);
+  const closed = useRef(false);
+
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  return (
-    <div className="clock" title="Current time">
-      <span className="clock-time">
-        {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-      </span>
-      <span className="clock-date">
-        {now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
-      </span>
-    </div>
-  );
-}
+    closed.current = false;
 
-function ThemeToggle() {
-  const [dark, setDark] = useState(() => {
-    try { return localStorage.getItem("plantrack_theme") === "dark"; } catch { return false; }
-  });
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-    try { localStorage.setItem("plantrack_theme", dark ? "dark" : "light"); } catch (e) { void e; }
-  }, [dark]);
-  return (
-    <button className="ghost icon-btn" title={dark ? "Switch to light mode" : "Switch to dark mode"}
-      onClick={() => setDark((d) => !d)}>
-      {dark ? <span aria-hidden="true">&#9789;</span> : <span aria-hidden="true">&#9728;</span>}
-    </button>
-  );
-}
+    const connect = () => {
+      setStatus(retry.current === 0 ? "connecting" : "connecting");
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl());
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      wsRef.current = ws;
 
-function ProfileMenu() {
-  const { user, logout } = useAuth();
-  const [open, setOpen] = useState(false);
-  const [showPw, setShowPw] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
-  if (!user) return null;
-  const initials = user.username.slice(0, 2).toUpperCase();
-  return (
-    <div className="profile-wrap">
-      <button className="avatar-btn" onClick={() => setOpen((o) => !o)} title="Account">
-        <span className="avatar">{initials}</span>
-        <span className="avatar-name">{user.username}</span>
-        <span className="avatar-caret"></span>
-      </button>
-      {open && (
-        <>
-          <div className="menu-backdrop" onClick={() => setOpen(false)} />
-          <div className="profile-menu">
-            <div className="profile-head">
-              <span className="avatar lg">{initials}</span>
-              <div>
-                <div className="profile-name">{user.username}</div>
-                <div className="profile-role"><span className="pill info">{user.role}</span></div>
-              </div>
-            </div>
-            <button className="menu-item" onClick={() => { setShowProfile(true); setOpen(false); }}>Profile & details</button>
-            <button className="menu-item" onClick={() => { setShowPw(true); setOpen(false); }}>Change password</button>
-            <div className="menu-sep" />
-            <button className="menu-item danger" onClick={logout}>Sign out</button>
-          </div>
-        </>
-      )}
-      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
-      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
-    </div>
-  );
-}
+      ws.onopen = () => {
+        retry.current = 0;
+        setStatus("live");
+      };
+      ws.onmessage = (ev) => {
+        let msg: ServerEvent;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (msg.type === "ping") return;
+        setLastEvent(msg);
+        // refresh affected views
+        if (msg.type === "schedule_updated") {
+          qc.invalidateQueries({ queryKey: qk.watchlist });
+          qc.invalidateQueries({ queryKey: qk.summary });
+        } else if (msg.type === "alert_raised") {
+          qc.invalidateQueries({ queryKey: qk.summary });
+          qc.invalidateQueries({ queryKey: qk.openAlerts });
+        } else if (msg.type === "order_changed") {
+          qc.invalidateQueries({ queryKey: qk.orders });
+          qc.invalidateQueries({ queryKey: qk.watchlist });
+        }
+      };
+      ws.onclose = () => {
+        if (!closed.current) scheduleReconnect();
+      };
+      ws.onerror = () => {
+        ws.close();
+      };
+    };
 
-function ProfileModal({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth();
-  if (!user) return null;
-  const initials = user.username.slice(0, 2).toUpperCase();
-  return (
-    <Modal title="Profile & details" onClose={onClose} footer={<button className="primary" onClick={onClose}>Close</button>}>
-      <div className="stack">
-        <div className="profile-head">
-          <span className="avatar xl">{initials}</span>
-          <div>
-            <div className="profile-name" style={{ fontSize: 18 }}>{user.username}</div>
-            <div className="profile-role"><span className="pill info">{user.role}</span></div>
-          </div>
-        </div>
-        <table>
-          <tbody>
-            <tr><td className="muted">Username</td><td>{user.username}</td></tr>
-            <tr><td className="muted">Role</td><td>{user.role}</td></tr>
-            {"full_name" in user && (user as { full_name?: string }).full_name &&
-              <tr><td className="muted">Full name</td><td>{(user as { full_name?: string }).full_name}</td></tr>}
-          </tbody>
-        </table>
-        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-          Profile photo upload is coming soon. For now your initials are shown as your avatar.
-        </p>
-      </div>
-    </Modal>
-  );
-}
+    const scheduleReconnect = () => {
+      setStatus("offline");
+      retry.current += 1;
+      const delay = Math.min(1000 * 2 ** retry.current, 15000);
+      setTimeout(() => {
+        if (!closed.current) connect();
+      }, delay);
+    };
 
-function ChangePasswordModal({ onClose }: { onClose: () => void }) {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const [busy, setBusy] = useState(false);
+    connect();
+    return () => {
+      closed.current = true;
+      wsRef.current?.close();
+    };
+  }, [qc]);
 
-  const submit = async () => {
-    setErr(null);
-    if (next.length < 6) { setErr("New password must be at least 6 characters."); return; }
-    setBusy(true);
-    try {
-      await api.changePassword(current, next);
-      setDone(true);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Couldn't change password.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="Change password" onClose={onClose} footer={
-      done ? <button className="primary" onClick={onClose}>Done</button> : (
-        <>
-          <button onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="primary" onClick={submit} disabled={busy}>{busy ? "Saving..." : "Update password"}</button>
-        </>
-      )
-    }>
-      {done ? (
-        <div className="banner ok">Password updated. Other sessions have been signed out.</div>
-      ) : (
-        <>
-          {err && <div className="banner err">{err}</div>}
-          <div><label>Current password</label><input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} /></div>
-          <div><label>New password</label><input type="password" value={next} onChange={(e) => setNext(e.target.value)} /></div>
-        </>
-      )}
-    </Modal>
-  );
-}
-
-export function App() {
-  const { user, loading, hasRole } = useAuth();
-
-  if (loading) {
-    return <div className="state" style={{ height: "100vh", display: "grid", placeItems: "center" }}><span className="spinner" /></div>;
-  }
-  if (!user) return <Login />;
-
-  const isAdmin = hasRole("admin");
-
-  return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          PlanTrack
-          <small>APS Control Tower</small>
-        </div>
-        {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-            {n.label}
-          </NavLink>
-        ))}
-        {isAdmin && (
-          <NavLink to="/admin" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-            Administration
-          </NavLink>
-        )}
-      </aside>
-
-      <div className="main">
-        <header className="topbar">
-          <h1>Production Control Tower</h1>
-          <div className="row" style={{ gap: 14 }}>
-            <Clock />
-            <LiveBadge />
-            <ThemeToggle />
-            <ProfileMenu />
-          </div>
-        </header>
-        <main className="content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/schedule" element={<Schedule />} />
-            <Route path="/timeline" element={<Timeline />} />
-            <Route path="/capacity" element={<Capacity />} />
-            <Route path="/materials" element={<Materials />} />
-            <Route path="/reschedule" element={<Reschedule />} />
-            <Route path="/delayed" element={<DelayedOrders />} />
-            <Route path="/events" element={<Events />} />
-            <Route path="/master-data" element={<MasterData />} />
-            <Route path="/data-model" element={<DataModel />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/configuration" element={<Configuration />} />
-            <Route path="/sandbox" element={<Sandbox />} />
-            <Route path="/import" element={<ImportData />} />
-            {isAdmin && <Route path="/admin" element={<Admin />} />}
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </div>
-  );
+  return { status, lastEvent };
 }
