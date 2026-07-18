@@ -562,6 +562,7 @@ function flattenOps(orders: SandboxOrderResult[], side: "live" | "whatif"): Gant
         work_center: s.stage, operation_seq: s.operation_seq ?? 0, start: s.start, end: s.end,
         parallel_group: s.parallel_group ?? null, order_id: o.order_id,
         priority: (priority ?? "MED") as GanttOp["priority"], customer: o.customer ?? "",
+        busy_hrs: s.busy_hrs ?? null,
       });
     }
   }
