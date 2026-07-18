@@ -219,9 +219,17 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
     for cm in db.query(models.ChangeoverMatrix).all():
         changeover[(cm.from_family, cm.to_family)] = int(cm.changeover_min or 0)
 
-    # warm start from the current schedule's operations (stabilises re-solves)
+    # warm start from the current schedule's operations (stabilises re-solves).
+    # MUST be scoped to the CURRENT schedule only -- querying every historical
+    # order_operation row (across every past re-solve) let a stale hint win
+    # depending on row return order, biasing the solver toward an outdated
+    # timing and causing it to land on a different (still valid, but
+    # different) tie-break than the actual current live schedule.
     warm: dict[tuple, int] = {}
-    for oo in db.query(models.OrderOperation).all():
+    for oo in (db.query(models.OrderOperation)
+               .join(models.PlannedSchedule, models.OrderOperation.schedule_id == models.PlannedSchedule.id)
+               .filter(models.PlannedSchedule.is_current.is_(True))
+               .all()):
         if oo.planned_start is not None:
             start_dt = oo.planned_start
             if start_dt.tzinfo is None:
