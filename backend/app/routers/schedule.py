@@ -86,10 +86,17 @@ def get_gantt_data(db: Session = Depends(get_db)):
     """
     ops = db.execute(text("""
         SELECT oo.work_center, oo.operation_seq, oo.planned_start, oo.planned_end,
-               oo.parallel_group, o.order_id, o.priority, o.customer
+               oo.parallel_group, o.order_id, o.priority, o.customer,
+               (
+                 COALESCE(ro.setup_min, 0) + COALESCE(ro.run_per_unit_min, 0) * o.order_qty
+                 + COALESCE(ro.queue_min, 0) + COALESCE(ro.move_min, 0)
+               ) / 60.0 AS busy_hrs
         FROM order_operation oo
         JOIN order_header o ON o.id = oo.order_id
         JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+        LEFT JOIN product p ON p.id = o.product_id
+        LEFT JOIN routing_operation ro ON ro.routing_id = p.routing_id
+            AND ro.operation_seq = oo.operation_seq
         WHERE oo.planned_start IS NOT NULL AND oo.planned_end IS NOT NULL
         ORDER BY oo.work_center, oo.planned_start
     """)).mappings().all()
@@ -140,6 +147,12 @@ def get_gantt_data(db: Session = Depends(get_db)):
             "order_id": r["order_id"],
             "priority": r["priority"],
             "customer": r["customer"],
+            # true machine-busy time (setup+run+queue+move), independent of
+            # calendar placement -- an operation spanning a shift boundary
+            # will show a longer start-to-end span than it was actually busy
+            # for; this field is what should be trusted as "how long," not
+            # (end - start).
+            "busy_hrs": round(float(r["busy_hrs"]), 2) if r["busy_hrs"] is not None else None,
         } for r in ops],
         "downtime": dt_out,
     }
