@@ -43,7 +43,14 @@ class Reason:
 class OrderStatus:
     order_pk: int
     order_id: str
-    status: str             # 'on' | 'risk' | 'delay' | 'crit'
+    status: str             # 'on' | 'risk' | 'delay' | 'crit' -- gates at-risk/delayed-critical
+    adherent: bool          # true only if slip_hrs (full, including silent) is within tolerance
+                            # -- deliberately MORE sensitive than status, so a silent start miss
+                            # dings schedule adherence immediately even though it never counts
+                            # toward at-risk/delayed-critical (see compute_order_status).
+    unconfirmed: bool       # on-track per status, but not adherent -- the "watch list": real
+                            # deviation too soft (or, for a silent start miss, too unconfirmed)
+                            # to count as at-risk, but worth seeing as a group.
     slip_hrs: float
     buffer_health: int
     remaining_buffer: float
@@ -87,6 +94,7 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     planned_start = _aware(sched.planned_prod_start_dt)
     planned_end = _aware(sched.planned_prod_end_dt)
     slip_mins = 0.0
+    silent_mins = 0.0  # tracked separately -- see thresholds dict for why
 
     start_evs = [e for e in events if e.event_type == "start"]
     has_started = len(start_evs) > 0
@@ -104,6 +112,7 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     if not has_started and not has_completed and now > planned_start:
         silent = (now - planned_start).total_seconds() / 60
         slip_mins += silent
+        silent_mins += silent
         reasons.append(Reason("time", f"Silent start miss +{round(silent/60, 1)}h"))
 
     # 3. downtime
@@ -193,13 +202,25 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     # (consistent with sched_late_hrs; avoids flagging same-day deliveries that
     # merely land after midnight as "late").
     delivery_breach = sched_late_hrs > 0
+
+    # Status (Orders at risk / Delayed-critical) is driven ONLY by CONFIRMED
+    # slip -- late start, downtime, scrap rework, throughput shortfall,
+    # delivery breach, material status. A silent start miss NEVER contributes
+    # here, however long it persists -- it's an unconfirmed signal (no logged
+    # event at all), and this team would rather it sit on the Unconfirmed /
+    # watch list indefinitely than eventually get treated as a confirmed
+    # delay. slip_hrs itself (used for adherence, buffer, forecast) is
+    # unaffected by this and still includes the full silent contribution.
+    non_silent_slip_hrs = max(0.0, round((slip_mins - silent_mins) / 60, 1))
+    escalation_hrs = max(non_silent_slip_hrs, sched_late_hrs)
+
     if has_completed:
         status, slip_hrs = "on", 0
-    elif slip_hrs > thresholds["crit_slip_hrs"] or delivery_breach:
+    elif escalation_hrs > thresholds["crit_slip_hrs"] or delivery_breach:
         status = "crit"
-    elif slip_hrs > thresholds["delay_slip_hrs"]:
+    elif escalation_hrs > thresholds["delay_slip_hrs"]:
         status = "delay"
-    elif (slip_hrs > thresholds["risk_slip_hrs"]
+    elif (escalation_hrs > thresholds["risk_slip_hrs"]
           or (ms and ms.status in ("late", "risk"))):
         # NOTE: buffer erosion alone no longer triggers 'risk'. Just-in-time /
         # load-levelled plans legitimately finish close to the due date (thin
@@ -208,10 +229,22 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
         # trigger. An order is at risk only for real slip or material issues.
         status = "risk"
 
+    # adherence is deliberately more sensitive than status: it uses the FULL
+    # slip (including the silent-start-miss component at full weight, and
+    # any delivery breach), not the confirmed-only escalation_hrs above. A
+    # silent gap that never counts toward at-risk still counts here.
+    adherent = (slip_hrs <= thresholds["risk_slip_hrs"]) and not delivery_breach
+
+    # Unconfirmed / watch list: real deviation dinging adherence, but not
+    # (yet, or ever, in the silent-miss case) enough to count as at-risk.
+    # Deliberately excludes anything already in risk/delay/crit so the two
+    # views never double-count the same order.
+    unconfirmed = (status == "on") and not adherent
+
     return OrderStatus(
-        order_pk=order.id, order_id=order.order_id, status=status, slip_hrs=slip_hrs,
-        buffer_health=buffer_health, remaining_buffer=remaining_buffer,
-        forecast_end=forecast_end, reasons=reasons)
+        order_pk=order.id, order_id=order.order_id, status=status, adherent=adherent,
+        unconfirmed=unconfirmed, slip_hrs=slip_hrs, buffer_health=buffer_health,
+        remaining_buffer=remaining_buffer, forecast_end=forecast_end, reasons=reasons)
 
 
 def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
@@ -223,6 +256,15 @@ def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
         "delay_slip_hrs": _thr(db, "delay_slip_hrs", 2),
         "risk_slip_hrs": _thr(db, "risk_slip_hrs", 0.5),
         "buffer_crit_pct": _thr(db, "buffer_crit_pct", 20),
+        # A silent start miss (no logged event at all) never contributes to
+        # status (Orders at risk / Delayed-critical), however long it
+        # persists -- it's unconfirmed, and this team would rather it sit on
+        # the Unconfirmed / watch list indefinitely than eventually get
+        # treated as a confirmed delay. It still fully counts toward
+        # schedule adherence (see compute_order_status's adherent field).
+        # The "crit" alert to the supervisor still fires immediately
+        # regardless (see push_alert below) -- that's a separate, faster
+        # "go check on this" signal, independent of the KPI-facing status.
     }
 
     # preserve prior alert status
@@ -302,3 +344,5 @@ def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
     if alerts_made:
         publish("alert_raised", {"count": alerts_made})
     return {"alerts": alerts_made, "deviations": deviations_made, "status_counts": status_counts}
+
+
