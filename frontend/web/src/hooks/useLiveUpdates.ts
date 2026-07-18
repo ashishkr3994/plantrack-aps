@@ -61,6 +61,7 @@ export function useLiveUpdates() {
           qc.invalidateQueries({ queryKey: qk.summary });
         } else if (msg.type === "alert_raised") {
           qc.invalidateQueries({ queryKey: qk.summary });
+          qc.invalidateQueries({ queryKey: qk.openAlerts });
         } else if (msg.type === "order_changed") {
           qc.invalidateQueries({ queryKey: qk.orders });
           qc.invalidateQueries({ queryKey: qk.watchlist });
