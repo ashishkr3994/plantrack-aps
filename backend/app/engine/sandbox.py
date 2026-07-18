@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .loader import load_scheduling_input, PACK_DAYS, DISPATCH_DAYS, TRANSPORT_DAYS
-from .cpsat_engine import solve as cpsat_solve
+from .cpsat_engine import solve as cpsat_solve, base_duration
 from .deviation import _thr
 from .kpi import compute_kpis
 
@@ -135,10 +135,10 @@ def _milestones(order_input, res, cal):
             "parallel_group": op.parallel_group,
             "start": _iso(cal.to_datetime(op.start_min)),
             "end": _iso(cal.to_datetime(op.end_min)),
-            # true processing time (working-minutes) -- see run_sandbox
-            # docstring for why (end - start) alone is unreliable across a
-            # shift/day boundary.
-            "duration_min": op.duration_min,
+            # true machine-busy time (setup+run+queue+move), independent of
+            # calendar placement -- see run_sandbox docstring for why the raw
+            # start/end wall-clock gap is unreliable across a shift boundary.
+            "busy_hrs": round(op.duration_min / 60, 2),
         })
     prod_end = delivery = None
     if ops:
@@ -213,9 +213,15 @@ def _live_ops(db: Session, pk: int | None, sched_pk: int | None):
     """), {"pk": pk, "sid": sched_pk}).mappings().all()
 
 
-def _live_stages(row: dict, ops) -> list[dict]:
+def _live_stages(row: dict, ops, rate_by_seq: dict, qty) -> list[dict]:
     """Stage-by-stage chain built entirely from persisted columns/rows --
-    same shape as _milestones, so the frontend renders both sides identically."""
+    same shape as _milestones, so the frontend renders both sides identically.
+    busy_hrs is computed from routing rates + the order's LIVE quantity (not
+    read from the calendar-converted timestamps), so it reflects true
+    machine-busy time regardless of where the op happens to land relative to
+    a shift boundary. If a scrap event changed the order's effective quantity
+    since the live schedule was last solved, this may not perfectly match what
+    was originally scheduled -- the common no-scrap case is exact."""
     if row.get("sched_pk") is None:
         return []
     stages = [{
@@ -223,14 +229,16 @@ def _live_stages(row: dict, ops) -> list[dict]:
         "start": _iso(row["planned_material_ready_dt"]), "end": None,
     }]
     for op in ops:
+        rate = rate_by_seq.get(op["operation_seq"])
+        busy_hrs = round(base_duration(rate, qty) / 60, 2) if (rate is not None and qty is not None) else None
         stages.append({
             "stage": op["work_center"], "kind": "op", "operation_seq": op["operation_seq"],
             "parallel_group": op["parallel_group"],
             "start": _iso(op["planned_start"]), "end": _iso(op["planned_end"]),
-            # true processing time (working-minutes), stored independently of
-            # the wall-clock start/end -- see run_sandbox docstring for why
-            # (end - start) alone is unreliable across a shift/day boundary.
-            "duration_min": float(op["duration_mins"]) if op["duration_mins"] is not None else None,
+            # true machine-busy time (setup+run+queue+move), independent of
+            # calendar placement -- see run_sandbox docstring for why the raw
+            # start/end wall-clock gap is unreliable across a shift boundary.
+            "busy_hrs": busy_hrs,
         })
     if row.get("planned_prod_end_dt"):
         stages.append({"stage": "Production end", "kind": "milestone", "start": None,
@@ -395,7 +403,11 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
             continue
         live_row = live.get(o.order_id, {})
         live_ops = _live_ops(db, live_row.get("pk"), live_row.get("sched_pk"))
-        stages_live = _live_stages(live_row, live_ops)
+        # routing rates come from the fresh what-if load -- the routing itself
+        # doesn't change between live and what-if, so this is valid for both
+        # sides; only the QUANTITY differs, which is applied separately below.
+        rate_by_seq = {op.seq: op for op in scen_in.ops}
+        stages_live = _live_stages(live_row, live_ops, rate_by_seq, live_row.get("order_qty"))
         stages_whatif, _pe_whatif, delivery_whatif = _milestones(scen_in, scenario, cal)
 
         buffer_live_hrs = (float(live_row["buffer_hrs"])
@@ -463,4 +475,4 @@ def run_sandbox(db: Session, req: SandboxRequest) -> dict:
                 "'Live leveling' reflects the most recent full solve -- if a single order "
                 "was since adjusted by a targeted recovery, that order may not trace to it."),
         "baseline_order_count": len(live),
-    }
+    }  
