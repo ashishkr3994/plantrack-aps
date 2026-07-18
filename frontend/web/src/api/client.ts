@@ -6,7 +6,7 @@ import type {
   DashboardSummary, WatchlistRow, SolveJob, SolveRequest, OrderSchedule,
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
-  AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, RecommendationResult,
+  AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, UnconfirmedOrderRow, RecommendationResult,
   DashboardKpis, KpiDrilldown, BottleneckRec, OvertimeRec, LeadTimeRow, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
   GanttData,
 } from "./types";
@@ -211,6 +211,7 @@ export const api = {
   rescheduleLog: (orderId: string) =>
     request<RescheduleLogRow[]>(`/schedule/orders/${orderId}/reschedule-log`),
   delayedOrders: () => request<DelayedOrderRow[]>("/dashboard/delayed-orders"),
+  unconfirmedOrders: () => request<UnconfirmedOrderRow[]>("/dashboard/unconfirmed-orders"),
   recommendRecovery: (orderId: string) =>
     request<RecommendationResult>(`/schedule/orders/${orderId}/recommend`, { method: "POST" }),
 
