@@ -41,6 +41,8 @@ def classify_orders(db: Session, now: datetime | None = None) -> dict:
     thresholds = _thresholds(db)
     buckets = {"on": [], "risk": [], "delay": [], "crit": []}
     details = {}  # order_id -> status detail for drill-downs
+    adherent_count = 0
+    unconfirmed = []  # "on" per status, but not adherent -- the watch list
     orders = db.query(models.OrderHeader).all()
     for o in orders:
         comp = compute_order_status(db, o, now, thresholds)
@@ -48,7 +50,12 @@ def classify_orders(db: Session, now: datetime | None = None) -> dict:
             continue  # unscheduled
         buckets[comp.status].append(o)
         details[o.id] = comp
-    return {"buckets": buckets, "details": details, "orders": orders}
+        if comp.adherent:
+            adherent_count += 1
+        if comp.unconfirmed:
+            unconfirmed.append(o)
+    return {"buckets": buckets, "details": details, "orders": orders,
+            "adherent_count": adherent_count, "unconfirmed": unconfirmed}
 
 
 def compute_kpis(db: Session, now: datetime | None = None) -> dict:
@@ -58,15 +65,20 @@ def compute_kpis(db: Session, now: datetime | None = None) -> dict:
     total = len(cls["orders"])
     scheduled = sum(len(v) for v in b.values())
 
-    on_track = len(b["on"])
     # Orders at risk = every order not on track (risk + delay + crit), so the
     # KPI number matches its drill-down list. (The prototype was internally
     # inconsistent here; this is the sensible, self-consistent choice.)
     at_risk = len(b["risk"]) + len(b["delay"]) + len(b["crit"])
     delayed_critical = len(b["delay"]) + len(b["crit"])
 
-    # adherence = on-track / total (prototype code definition)
-    adherence_pct = round(100.0 * on_track / total) if total else None
+    # Adherence is DELIBERATELY a separate, more sensitive count than
+    # on_track = total - at_risk. It uses the full slip (including a silent
+    # start miss at full weight), so a not-yet-confirmed deviation dings
+    # adherence immediately even while it's still too weak a signal to land
+    # an order in "at risk" -- see compute_order_status's adherent field.
+    # This means adherent_count + at_risk no longer necessarily sums to
+    # total; that's intentional, not a bug.
+    adherence_pct = round(100.0 * cls["adherent_count"] / total) if total else None
 
     # on-time delivery = committed >= planned_delivery / total
     otd_count = db.execute(text("""
@@ -92,6 +104,7 @@ def compute_kpis(db: Session, now: datetime | None = None) -> dict:
         "on_time_delivery_pct": otd_pct,           # customer promise
         "orders_at_risk": at_risk,                 # of N active
         "delayed_critical": delayed_critical,      # need recovery
+        "unconfirmed": len(cls["unconfirmed"]),    # watch list -- too soft to act on individually
         "material_at_risk": material_at_risk,      # orders affected
         "capacity_conflicts": capacity_conflicts,  # overloaded WC-days
     }
@@ -131,6 +144,13 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
         return {"title": "Delayed & critical orders",
                 "subtitle": "Slip beyond delay threshold or delivery breach predicted",
                 "rows": rows_for(b["delay"] + b["crit"])}
+
+    if key == "unconfirmed":
+        return {"title": "Unconfirmed - watch list",
+                "subtitle": ("Real deviation too soft to act on individually -- a silent start "
+                            "miss (however long) or a small delay under the at-risk threshold. "
+                            "Not urgent; worth watching as a group."),
+                "rows": rows_for(cls["unconfirmed"])}
 
     if key == "material":
         mats = db.execute(text("""
