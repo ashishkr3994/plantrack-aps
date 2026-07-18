@@ -15,6 +15,7 @@ KPIs (matching the prototype definitions/labels):
   - capacity_conflicts     : overloaded work-centre-days    ("overloaded WC-days")
 """
 from datetime import datetime, timezone
+import json
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -146,7 +147,7 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
                 "rows": rows_for(b["delay"] + b["crit"])}
 
     if key == "unconfirmed":
-        return {"title": "Unconfirmed - watch list",
+        return {"title": "Watch list - unconfirmed deviations",
                 "subtitle": ("Real deviation too soft to act on individually -- a silent start "
                             "miss (however long) or a small delay under the at-risk threshold. "
                             "Not urgent; worth watching as a group."),
@@ -198,3 +199,78 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
                 "rows": rows}
 
     return {"title": "Unknown", "subtitle": "", "rows": []}
+
+
+_TREND_KEYS = ["schedule_adherence_pct", "on_time_delivery_pct", "orders_at_risk",
+               "delayed_critical", "unconfirmed", "material_at_risk", "capacity_conflicts"]
+
+
+def record_snapshot(db: Session, kpis: dict, delayed_critical_order_ids: list[str]) -> None:
+    """Record a KPI snapshot for trend/digest comparisons -- throttled to at
+    most one per hour so repeated dashboard loads don't flood the table.
+    Called from the /dashboard/kpis endpoint on every load; this is the only
+    place snapshots get written, so history builds up naturally as the
+    dashboard gets used rather than needing a separate scheduled job."""
+    last = db.execute(text(
+        "SELECT captured_at FROM dashboard_snapshot ORDER BY captured_at DESC LIMIT 1")).scalar()
+    now = datetime.now(timezone.utc)
+    if last is not None:
+        last_aware = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+        if (now - last_aware).total_seconds() < 3600:
+            return
+    db.execute(text("""
+        INSERT INTO dashboard_snapshot
+            (captured_at, schedule_adherence_pct, on_time_delivery_pct, orders_at_risk,
+             delayed_critical, unconfirmed, material_at_risk, capacity_conflicts,
+             delayed_critical_order_ids)
+        VALUES (:now, :sa, :otd, :risk, :dc, :unc, :mat, :cap, :ids)
+    """), {
+        "now": now, "sa": kpis.get("schedule_adherence_pct"), "otd": kpis.get("on_time_delivery_pct"),
+        "risk": kpis.get("orders_at_risk"), "dc": kpis.get("delayed_critical"),
+        "unc": kpis.get("unconfirmed"), "mat": kpis.get("material_at_risk"),
+        "cap": kpis.get("capacity_conflicts"), "ids": json.dumps(delayed_critical_order_ids),
+    })
+    db.commit()
+
+
+def get_trend(db: Session, current: dict) -> dict:
+    """Delta for each KPI vs the closest snapshot to ~24h ago. Returns an
+    empty dict (no trend shown) if there's no snapshot old enough yet -- a
+    freshly reset demo or a brand-new deployment has no history to compare
+    against, and showing a fake trend would be worse than showing none."""
+    row = db.execute(text(f"""
+        SELECT {', '.join(_TREND_KEYS)} FROM dashboard_snapshot
+        WHERE captured_at <= now() - interval '20 hours'
+        ORDER BY captured_at DESC LIMIT 1
+    """)).mappings().first()
+    if not row:
+        return {}
+    out = {}
+    for k in _TREND_KEYS:
+        if row[k] is not None and current.get(k) is not None:
+            out[k] = current[k] - row[k]
+    return out
+
+
+def get_digest(db: Session, current_delayed_ids: list[str]) -> dict:
+    """'Since you last checked': compares the current delayed/critical order
+    set against the EARLIEST snapshot captured today (a "since this morning"
+    baseline), so a planner opening the dashboard mid-shift sees what
+    changed rather than just the current total. On the first load of the
+    day there's no earlier snapshot yet, so this returns empty lists --
+    honestly reflecting that there's nothing to compare against yet, not a
+    fabricated zero."""
+    row = db.execute(text("""
+        SELECT delayed_critical_order_ids, captured_at FROM dashboard_snapshot
+        WHERE captured_at::date = current_date
+        ORDER BY captured_at ASC LIMIT 1
+    """)).mappings().first()
+    if not row:
+        return {"new": [], "resolved": [], "since": None}
+    prior_ids = set(row["delayed_critical_order_ids"] or [])
+    current_ids = set(current_delayed_ids)
+    return {
+        "new": sorted(current_ids - prior_ids),
+        "resolved": sorted(prior_ids - current_ids),
+        "since": row["captured_at"].isoformat(),
+    }
