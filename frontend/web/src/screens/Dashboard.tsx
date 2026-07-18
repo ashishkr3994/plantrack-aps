@@ -1,19 +1,19 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, RadialBarChart, RadialBar } from "recharts";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, PriorityPill, Modal } from "@/components/ui";
 import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime, fmtHours } from "@/lib/format";
+import type { WatchlistRow } from "@/api/types";
 
 export function Dashboard() {
   const nav = useNavigate();
   const kpis = useQuery({ queryKey: ["kpis"], queryFn: api.kpis });
   const watch = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlist });
+  const digest = useQuery({ queryKey: ["digest"], queryFn: api.digest });
   const [drillOrder, setDrillOrder] = useState<string | null>(null);
   const [drillKey, setDrillKey] = useState<string | null>(null);
-
-  // adherence/OTD color: green >=90, amber >=80, red below (prototype thresholds)
-  const pctTone = (v: number | null) => v == null ? undefined : v >= 90 ? "ok" : v >= 80 ? "warn" : "alert";
 
   return (
     <div className="stack">
@@ -22,47 +22,26 @@ export function Dashboard() {
           Schedule last updated {fmtRelativeTime(kpis.data.last_updated)}
         </div>
       )}
-      {/* KPI strip - six prototype KPIs, each opens a drill-down of the orders behind it */}
-      <section className="grid kpis">
+
+      <Digest digest={digest.data} onOpenOrder={setDrillOrder} />
+
+      {/* Charts row: 2 gauges (target metrics), a health-distribution donut, and
+          an issues-by-category bar -- replaces the old plain 7-KPI-card grid.
+          Every segment/bar is clickable and goes to the exact same
+          destination its old KPI card did. */}
+      <section className="grid" style={{ gridTemplateColumns: "150px 150px 1fr 1fr", gap: 14 }}>
         {kpis.isLoading && <Loading label="Loading metrics..." />}
         {kpis.isError && <ErrorState message="Couldn't load metrics." onRetry={() => kpis.refetch()} />}
         {kpis.data && (
           <>
-            <KpiCard label="Schedule adherence"
-              value={kpis.data.schedule_adherence_pct == null ? "-" : `${kpis.data.schedule_adherence_pct}%`}
-              sub="vs 95% target" tone={pctTone(kpis.data.schedule_adherence_pct)}
-              tip="On-track orders divided by total scheduled, against a 95% target. Measures how well the shop is keeping to plan."
+            <Gauge label="Schedule adherence" pct={kpis.data.schedule_adherence_pct}
+              trend={kpis.data.trend?.schedule_adherence_pct}
               onClick={() => setDrillKey("adherence")} />
-            <KpiCard label="On-time delivery"
-              value={kpis.data.on_time_delivery_pct == null ? "-" : `${kpis.data.on_time_delivery_pct}%`}
-              sub="customer promise" tone={pctTone(kpis.data.on_time_delivery_pct)}
-              tip="Orders whose delivery lands on or before the committed date, divided by total. The customer-facing promise metric."
+            <Gauge label="On-time delivery" pct={kpis.data.on_time_delivery_pct}
+              trend={kpis.data.trend?.on_time_delivery_pct}
               onClick={() => setDrillKey("otd")} />
-            <KpiCard label="Orders at risk" value={kpis.data.orders_at_risk}
-              sub={`of ${kpis.data.orders} active`}
-              tone={kpis.data.orders_at_risk > 5 ? "alert" : kpis.data.orders_at_risk > 2 ? "warn" : "ok"}
-              tip="Every order not fully on track - slipping, buffer-thin, material-blocked or delayed."
-              onClick={() => setDrillKey("risk")} />
-            <KpiCard label="Delayed / critical" value={kpis.data.delayed_critical}
-              sub="need recovery"
-              tone={kpis.data.delayed_critical > 3 ? "alert" : kpis.data.delayed_critical > 1 ? "warn" : "ok"}
-              tip="Orders slipping past the delay threshold or predicted to breach delivery - the ones needing a recovery action."
-              onClick={() => nav("/delayed")} />
-            <KpiCard label="Unconfirmed" value={kpis.data.unconfirmed}
-              sub="watch, don't act yet"
-              tone={kpis.data.unconfirmed > 5 ? "warn" : undefined}
-              tip="Orders with a real deviation too soft to act on individually - a silent start miss (no logged event at all, however long) or a small logged delay under the at-risk threshold. Not urgent; worth watching as a group."
-              onClick={() => setDrillKey("unconfirmed")} />
-            <KpiCard label="Material at risk" value={kpis.data.material_at_risk}
-              sub="orders affected"
-              tone={kpis.data.material_at_risk > 2 ? "alert" : kpis.data.material_at_risk > 0 ? "warn" : "ok"}
-              tip="Orders whose material is late or at risk - procurement delays that can cascade into production."
-              onClick={() => setDrillKey("material")} />
-            <KpiCard label="Capacity conflicts" value={kpis.data.capacity_conflicts}
-              sub="overloaded WC-days"
-              tone={kpis.data.capacity_conflicts > 3 ? "alert" : kpis.data.capacity_conflicts > 0 ? "warn" : "ok"}
-              tip="Work-centre days where scheduled demand exceeds available minutes. Click to see the Capacity screen."
-              onClick={() => nav("/capacity")} />
+            <HealthDonut kpis={kpis.data} onSetDrillKey={setDrillKey} onNav={nav} />
+            <IssuesBar kpis={kpis.data} onSetDrillKey={setDrillKey} onNav={nav} />
           </>
         )}
       </section>
@@ -77,50 +56,7 @@ export function Dashboard() {
 
       <DelayedCriticalPanel onViewAll={() => nav("/delayed")} />
 
-      {/* Order watchlist with deep drill-down */}
-      <section className="card">
-        <div className="hd">
-          Order watchlist
-          {watch.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing...</span>}
-        </div>
-        <div className="bd" style={{ padding: 0 }}>
-          {watch.isLoading && <Loading />}
-          {watch.isError && <ErrorState message="Couldn't load the watchlist." onRetry={() => watch.refetch()} />}
-          {watch.data && watch.data.length === 0 && <div className="state">No orders yet.</div>}
-          {watch.data && watch.data.length > 0 && (
-            <table className="roomy">
-              <thead>
-                <tr>
-                  <th>Order</th><th>Product</th><th>Customer</th><th className="num">Qty</th>
-                  <th>Priority</th><th>Committed</th><th>Planned delivery</th>
-                  <th>Buffer</th><th>Material</th><th>Schedule</th>
-                </tr>
-              </thead>
-              <tbody>
-                {watch.data.map((r) => (
-                  <tr key={r.order_id} style={{ cursor: "pointer" }} onClick={() => setDrillOrder(r.order_id)}
-                      title="Click for full order detail">
-                    <td className="mono">{r.order_id}</td>
-                    <td>{r.product_name}</td>
-                    <td>{r.customer}</td>
-                    <td className="num">{r.order_qty}</td>
-                    <td><PriorityPill priority={r.priority} /></td>
-                    <td>{fmtDate(r.committed_delivery_date)}</td>
-                    <td>{fmtDate(r.planned_delivery_dt)}</td>
-                    <td><BufferBar hrs={r.buffer_hrs} /></td>
-                    <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
-                    <td>{r.schedule_status
-                      ? (Number(r.buffer_hrs) < 0
-                          ? <Pill tone="risk">Late</Pill>
-                          : <Pill tone="ok">On track</Pill>)
-                      : <span className="muted">not scheduled</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+      <OrderWatchlist watch={watch} onOpenOrder={setDrillOrder} />
 
       {/* Insight panels */}
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
@@ -133,7 +69,254 @@ export function Dashboard() {
   );
 }
 
+function Digest({ digest, onOpenOrder }: {
+  digest?: { new: string[]; resolved: string[]; since: string | null };
+  onOpenOrder: (oid: string) => void;
+}) {
+  if (!digest || (digest.new.length === 0 && digest.resolved.length === 0)) return null;
+  const since = digest.since ? fmtRelativeTime(digest.since) : "your last check";
+  return (
+    <div className="banner" style={{ background: "var(--surface-1, #f4f6f7)", border: "1px solid var(--line)", fontSize: 12.5 }}>
+      Since {since}:{" "}
+      {digest.new.length > 0 && (
+        <span style={{ color: "var(--risk)", fontWeight: 650 }}>+{digest.new.length} new critical</span>
+      )}
+      {digest.new.length > 0 && digest.resolved.length > 0 && ", "}
+      {digest.resolved.length > 0 && (
+        <span style={{ color: "var(--ok)", fontWeight: 650 }}>{digest.resolved.length} resolved</span>
+      )}
+      {digest.new.length > 0 && (
+        <span className="muted" style={{ marginLeft: 8 }}>
+          ({digest.new.map((oid, i) => (
+            <span key={oid}>
+              {i > 0 && ", "}
+              <span style={{ color: "var(--teal)", cursor: "pointer" }} onClick={() => onOpenOrder(oid)}>{oid}</span>
+            </span>
+          ))})
+        </span>
+      )}
+    </div>
+  );
+}
 
+function TrendTag({ trend, higherIsBetter = true }: { trend?: number; higherIsBetter?: boolean }) {
+  if (trend == null || trend === 0) return null;
+  const better = higherIsBetter ? trend > 0 : trend < 0;
+  const arrow = trend > 0 ? "\u2191" : "\u2193";
+  return (
+    <span style={{ fontSize: 10.5, color: better ? "var(--ok)" : "var(--risk)", fontWeight: 600 }}>
+      {arrow}{Math.abs(trend)} vs yesterday
+    </span>
+  );
+}
+
+function Gauge({ label, pct, trend, onClick }: {
+  label: string; pct: number | null; trend?: number; onClick: () => void;
+}) {
+  const v = pct ?? 0;
+  const color = v >= 90 ? "var(--ok)" : v >= 80 ? "var(--warn)" : "var(--risk)";
+  const data = [{ value: v }];
+  return (
+    <div className="card" style={{ cursor: "pointer", textAlign: "center", padding: "10px 6px" }}
+      onClick={onClick} title="Click for the orders behind this metric.">
+      <div style={{ position: "relative", width: 84, height: 84, margin: "0 auto" }}>
+        <RadialBarChart width={84} height={84} cx="50%" cy="50%" innerRadius="72%" outerRadius="100%"
+          barSize={7} data={data} startAngle={90} endAngle={-270}>
+          <RadialBar dataKey="value" cornerRadius={4} fill={color} background={{ fill: "var(--line)" }}
+            isAnimationActive={false} />
+        </RadialBarChart>
+        <div style={{
+          position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16, fontWeight: 700,
+        }}>
+          {pct == null ? "-" : `${pct}%`}
+        </div>
+      </div>
+      <div className="l" style={{ marginTop: 4 }}>{label}</div>
+      <div><TrendTag trend={trend} /></div>
+    </div>
+  );
+}
+
+const HEALTH_COLORS = { on: "var(--ok)", unconfirmed: "#8a97a0", risk: "var(--warn)", delayed: "var(--risk)" };
+
+function HealthDonut({ kpis, onSetDrillKey, onNav }: {
+  kpis: { orders: number; orders_at_risk: number; delayed_critical: number; unconfirmed: number };
+  onSetDrillKey: (k: string) => void; onNav: (path: string) => void;
+}) {
+  const onTrack = Math.max(0, kpis.orders - kpis.orders_at_risk - kpis.unconfirmed);
+  const segments = [
+    { key: "on", label: "On track", value: onTrack, color: HEALTH_COLORS.on, onClick: undefined },
+    { key: "unconfirmed", label: "Watch list", value: kpis.unconfirmed, color: HEALTH_COLORS.unconfirmed,
+      onClick: () => onSetDrillKey("unconfirmed") },
+    { key: "risk", label: "At risk", value: kpis.orders_at_risk, color: HEALTH_COLORS.risk,
+      onClick: () => onSetDrillKey("risk") },
+    { key: "delayed", label: "Delayed/critical", value: kpis.delayed_critical, color: HEALTH_COLORS.delayed,
+      onClick: () => onNav("/delayed") },
+  ].filter((s) => s.value > 0);
+
+  return (
+    <div className="card" style={{ padding: "10px 14px" }}>
+      <div className="l" style={{ marginBottom: 4 }}>Order health distribution</div>
+      <div className="row" style={{ gap: 12, alignItems: "center" }}>
+        <div style={{ width: 90, height: 90, flex: "none" }}>
+          <PieChart width={90} height={90}>
+            <Pie data={segments} dataKey="value" innerRadius={26} outerRadius={42} isAnimationActive={false}
+              onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
+              {segments.map((s) => (
+                <Cell key={s.key} fill={s.color} cursor={s.onClick ? "pointer" : "default"} />
+              ))}
+            </Pie>
+          </PieChart>
+        </div>
+        <div style={{ fontSize: 11 }}>
+          {segments.map((s) => (
+            <div key={s.key} style={{ cursor: s.onClick ? "pointer" : "default", marginBottom: 2 }}
+              onClick={s.onClick} title={s.onClick ? "Click for the orders behind this" : undefined}>
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 5 }} />
+              {s.label} - {s.value}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IssuesBar({ kpis, onSetDrillKey, onNav }: {
+  kpis: { material_at_risk: number; capacity_conflicts: number; unconfirmed: number; delayed_critical: number };
+  onSetDrillKey: (k: string) => void; onNav: (path: string) => void;
+}) {
+  const items = [
+    { label: "Material", value: kpis.material_at_risk, color: "var(--warn)", onClick: () => onSetDrillKey("material") },
+    { label: "Capacity", value: kpis.capacity_conflicts, color: "#2a78d6", onClick: () => onNav("/capacity") },
+    { label: "Watch list", value: kpis.unconfirmed, color: HEALTH_COLORS.unconfirmed, onClick: () => onSetDrillKey("unconfirmed") },
+    { label: "Delayed", value: kpis.delayed_critical, color: "var(--risk)", onClick: () => onNav("/delayed") },
+  ];
+  return (
+    <div className="card" style={{ padding: "10px 14px" }}>
+      <div className="l" style={{ marginBottom: 4 }}>Issues by category</div>
+      <BarChart width={220} height={100} data={items} layout="vertical"
+        margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
+        <XAxis type="number" hide />
+        <YAxis type="category" dataKey="label" width={62} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+        <Bar dataKey="value" radius={3} barSize={14} isAnimationActive={false}
+          onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
+          {items.map((it, i) => <Cell key={i} fill={it.color} cursor="pointer" />)}
+        </Bar>
+      </BarChart>
+    </div>
+  );
+}
+
+
+function OrderWatchlist({ watch, onOpenOrder }: {
+  watch: { data?: WatchlistRow[]; isLoading: boolean; isError: boolean; isFetching: boolean; refetch: () => void };
+  onOpenOrder: (oid: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [priority, setPriority] = useState("");
+  const [workCentre, setWorkCentre] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  const allWorkCentres = useMemo(() => {
+    const set = new Set<string>();
+    (watch.data ?? []).forEach((r) => (r.work_centers ?? []).forEach((wc) => set.add(wc)));
+    return Array.from(set).sort();
+  }, [watch.data]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (watch.data ?? []).filter((r) => {
+      if (q && !r.order_id.toLowerCase().includes(q) && !r.customer.toLowerCase().includes(q)) return false;
+      if (priority && r.priority !== priority) return false;
+      if (workCentre && !(r.work_centers ?? []).includes(workCentre)) return false;
+      return true;
+    });
+  }, [watch.data, search, priority, workCentre]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const resetPage = () => setPage(0);
+
+  return (
+    <section className="card">
+      <div className="hd">
+        Order watchlist
+        {watch.isFetching && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>refreshing...</span>}
+      </div>
+      <div className="bd" style={{ padding: "10px 16px 0" }}>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input type="search" placeholder="Search order or customer..." value={search}
+            onChange={(e) => { setSearch(e.target.value); resetPage(); }} style={{ width: 200 }} />
+          <select value={priority} onChange={(e) => { setPriority(e.target.value); resetPage(); }} style={{ width: 130 }}>
+            <option value="">All priorities</option>
+            <option value="HIGH">HIGH</option><option value="MED">MED</option><option value="LOW">LOW</option>
+          </select>
+          <select value={workCentre} onChange={(e) => { setWorkCentre(e.target.value); resetPage(); }} style={{ width: 170 }}>
+            <option value="">All work centres</option>
+            {allWorkCentres.map((wc) => <option key={wc} value={wc}>{wc}</option>)}
+          </select>
+          {(search || priority || workCentre) && (
+            <button className="ghost" onClick={() => { setSearch(""); setPriority(""); setWorkCentre(""); resetPage(); }}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="bd" style={{ padding: 0 }}>
+        {watch.isLoading && <Loading />}
+        {watch.isError && <ErrorState message="Couldn't load the watchlist." onRetry={watch.refetch} />}
+        {watch.data && filtered.length === 0 && (
+          <div className="state">{watch.data.length === 0 ? "No orders yet." : "No orders match these filters."}</div>
+        )}
+        {pageRows.length > 0 && (
+          <table className="roomy">
+            <thead>
+              <tr>
+                <th>Order</th><th>Product</th><th>Customer</th><th className="num">Qty</th>
+                <th>Priority</th><th>Committed</th><th>Planned delivery</th>
+                <th>Buffer</th><th>Material</th><th>Schedule</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((r) => (
+                <tr key={r.order_id} style={{ cursor: "pointer" }} onClick={() => onOpenOrder(r.order_id)}
+                    title="Click for full order detail">
+                  <td className="mono">{r.order_id}</td>
+                  <td>{r.product_name}</td>
+                  <td>{r.customer}</td>
+                  <td className="num">{r.order_qty}</td>
+                  <td><PriorityPill priority={r.priority} /></td>
+                  <td>{fmtDate(r.committed_delivery_date)}</td>
+                  <td>{fmtDate(r.planned_delivery_dt)}</td>
+                  <td><BufferBar hrs={r.buffer_hrs} /></td>
+                  <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
+                  <td>{r.schedule_status
+                    ? (Number(r.buffer_hrs) < 0
+                        ? <Pill tone="risk">Late</Pill>
+                        : <Pill tone="ok">On track</Pill>)
+                    : <span className="muted">not scheduled</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {filtered.length > PAGE_SIZE && (
+        <div className="row" style={{ justifyContent: "flex-end", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--line)" }}>
+          <button disabled={page === 0} onClick={() => setPage(0)}>First</button>
+          <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</button>
+          <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Page {page + 1} of {totalPages}</span>
+          <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Next</button>
+          <button disabled={page >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>Last</button>
+        </div>
+      )}
+    </section>
+  );
+}
 function BufferBar({ hrs }: { hrs: unknown }) {
   if (hrs == null || typeof hrs !== "number") return <span className="muted">-</span>;
   const pctVal = Math.max(0, Math.min(100, (hrs / 72) * 100));
@@ -174,13 +357,14 @@ function DelayedCriticalPanel({ onViewAll }: { onViewAll: () => void }) {
         {q.isLoading && <Loading />}
         {q.isError && <ErrorState message="Couldn't load delayed orders." onRetry={() => q.refetch()} />}
         {q.data && rows.length === 0 && (
-          <div className="state">No delayed or critical orders right now.</div>
+          <div className="state">Nothing critical right now.</div>
         )}
         {rows.length > 0 && (
           <table className="roomy">
             <thead>
               <tr>
-                <th>Order</th><th>Deviation</th><th>Priority</th><th>Milestone affected</th><th></th>
+                <th>Order</th><th>Customer</th><th className="num">Qty</th><th>Deviation</th>
+                <th>Priority</th><th>Milestone affected</th><th>Reason</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -189,11 +373,14 @@ function DelayedCriticalPanel({ onViewAll }: { onViewAll: () => void }) {
                   onClick={() => nav(`/delayed?order=${encodeURIComponent(r.order_id)}`)}
                   title="See why and get a recommendation">
                   <td className="mono">{r.order_id}</td>
+                  <td>{r.customer}</td>
+                  <td className="num">{r.order_qty}</td>
                   <td style={{ color: r.severity === "Critical" ? "var(--risk)" : "var(--warn)", fontWeight: 650 }}>
                     {r.deviation_minutes ? fmtHours(r.deviation_minutes / 60) : "-"}
                   </td>
                   <td><PriorityPill priority={r.priority} /></td>
                   <td>{r.milestone_name}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{r.root_cause_code || "-"}</td>
                   <td style={{ color: "var(--teal)", fontSize: 11 }}>Why &amp; recover &rarr;</td>
                 </tr>
               ))}
@@ -391,23 +578,6 @@ function KV({ pairs }: { pairs: Array<[string, string]> }) {
 }
 function Empty({ text }: { text: string }) {
   return <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>{text}</p>;
-}
-
-function KpiCard({ label, value, sub, tone, onClick, tip }: {
-  label: string; value: React.ReactNode; sub?: string;
-  tone?: "ok" | "warn" | "alert"; onClick?: () => void; tip?: string;
-}) {
-  const clickHint = onClick ? "Click for the orders behind this metric." : "";
-  const title = [tip, clickHint].filter(Boolean).join(" ") || undefined;
-  return (
-    <div className={`kpi ${tone === "alert" ? "alert" : tone === "warn" ? "warn" : ""}`}
-         onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}
-         title={title}>
-      <div className="v">{value}</div>
-      <div className="l">{label}</div>
-      {sub && <div className="l" style={{ opacity: 0.6, fontSize: 11 }}>{sub}</div>}
-    </div>
-  );
 }
 
 function ReasonChip({ type, text }: { type: string; text: string }) {
