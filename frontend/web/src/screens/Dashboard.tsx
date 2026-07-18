@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, PriorityPill, Modal } from "@/components/ui";
-import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime } from "@/lib/format";
+import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime, fmtHours } from "@/lib/format";
 
 export function Dashboard() {
   const nav = useNavigate();
@@ -47,7 +47,7 @@ export function Dashboard() {
               sub="need recovery"
               tone={kpis.data.delayed_critical > 3 ? "alert" : kpis.data.delayed_critical > 1 ? "warn" : "ok"}
               tip="Orders slipping past the delay threshold or predicted to breach delivery - the ones needing a recovery action."
-              onClick={() => setDrillKey("delayed")} />
+              onClick={() => nav("/delayed")} />
             <KpiCard label="Material at risk" value={kpis.data.material_at_risk}
               sub="orders affected"
               tone={kpis.data.material_at_risk > 2 ? "alert" : kpis.data.material_at_risk > 0 ? "warn" : "ok"}
@@ -70,6 +70,7 @@ export function Dashboard() {
         />
       )}
 
+      <DelayedCriticalPanel onViewAll={() => nav("/delayed")} />
 
       {/* Order watchlist with deep drill-down */}
       <section className="card">
@@ -116,9 +117,8 @@ export function Dashboard() {
         </div>
       </section>
 
-      {/* Three insight panels */}
+      {/* Insight panels */}
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-        <DelayReasonsPanel onOpen={() => nav("/delayed")} />
         <RecoveryPipelinePanel onOpen={() => nav("/reschedule")} />
         <MaterialRiskPanel onOpen={() => nav("/materials")} />
       </div>
@@ -143,25 +143,58 @@ function BufferBar({ hrs }: { hrs: unknown }) {
   );
 }
 
-function DelayReasonsPanel({ onOpen }: { onOpen: () => void }) {
-  const q = useQuery({ queryKey: ["delay-reasons"], queryFn: api.delayReasons });
-  const rows = q.data ?? [];
-  const max = Math.max(1, ...rows.map((r) => r.count));
+const SEVERITY_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2 };
+
+function DelayedCriticalPanel({ onViewAll }: { onViewAll: () => void }) {
+  const nav = useNavigate();
+  const q = useQuery({ queryKey: ["delayed-orders"], queryFn: api.delayedOrders });
+  const rows = (q.data ?? [])
+    .slice()
+    .sort((a, b) => {
+      const rankDiff = (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9);
+      if (rankDiff !== 0) return rankDiff;
+      return (b.deviation_minutes ?? 0) - (a.deviation_minutes ?? 0);
+    })
+    .slice(0, 5);
+  const total = q.data?.length ?? 0;
+
   return (
-    <section className="card">
-      <div className="hd" style={{ cursor: "pointer" }} onClick={onOpen} title="Open reschedule">Delay reasons &rarr;</div>
-      <div className="bd">
+    <section className="card" style={{ borderColor: "#f3c9c5" }}>
+      <div className="hd" style={{ borderColor: "#f3c9c5", background: "var(--risk-bg)", color: "var(--risk)", cursor: "pointer" }}
+        onClick={onViewAll} title="See all delayed & critical orders">
+        Delayed & critical orders
+        <span style={{ fontSize: 11, fontWeight: 500, color: "var(--ink-2)" }}>View all ({total}) &rarr;</span>
+      </div>
+      <div className="bd" style={{ padding: 0 }}>
         {q.isLoading && <Loading />}
-        {!q.isLoading && rows.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No open deviations - nothing delayed.</div>}
-        {rows.map((r) => (
-          <div key={r.root_cause} style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
-              <span>{r.root_cause}</span>
-              <span className="muted">{r.count} - {r.total_hours}h</span>
-            </div>
-            <div className="buffer-track"><div className="buffer-fill" style={{ width: `${(r.count / max) * 100}%`, background: "var(--warn)" }} /></div>
-          </div>
-        ))}
+        {q.isError && <ErrorState message="Couldn't load delayed orders." onRetry={() => q.refetch()} />}
+        {q.data && rows.length === 0 && (
+          <div className="state">No delayed or critical orders right now.</div>
+        )}
+        {rows.length > 0 && (
+          <table className="roomy">
+            <thead>
+              <tr>
+                <th>Order</th><th>Deviation</th><th>Priority</th><th>Milestone affected</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.order_id} style={{ cursor: "pointer" }}
+                  onClick={() => nav(`/delayed?order=${encodeURIComponent(r.order_id)}`)}
+                  title="See why and get a recommendation">
+                  <td className="mono">{r.order_id}</td>
+                  <td style={{ color: r.severity === "Critical" ? "var(--risk)" : "var(--warn)", fontWeight: 650 }}>
+                    {r.deviation_minutes ? fmtHours(r.deviation_minutes / 60) : "-"}
+                  </td>
+                  <td><PriorityPill priority={r.priority} /></td>
+                  <td>{r.milestone_name}</td>
+                  <td style={{ color: "var(--teal)", fontSize: 11 }}>Why &amp; recover &rarr;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </section>
   );
