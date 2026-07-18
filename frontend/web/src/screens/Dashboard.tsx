@@ -48,6 +48,11 @@ export function Dashboard() {
               tone={kpis.data.delayed_critical > 3 ? "alert" : kpis.data.delayed_critical > 1 ? "warn" : "ok"}
               tip="Orders slipping past the delay threshold or predicted to breach delivery - the ones needing a recovery action."
               onClick={() => nav("/delayed")} />
+            <KpiCard label="Unconfirmed" value={kpis.data.unconfirmed}
+              sub="watch, don't act yet"
+              tone={kpis.data.unconfirmed > 5 ? "warn" : undefined}
+              tip="Orders with a real deviation too soft to act on individually - a silent start miss (no logged event at all, however long) or a small logged delay under the at-risk threshold. Not urgent; worth watching as a group."
+              onClick={() => setDrillKey("unconfirmed")} />
             <KpiCard label="Material at risk" value={kpis.data.material_at_risk}
               sub="orders affected"
               tone={kpis.data.material_at_risk > 2 ? "alert" : kpis.data.material_at_risk > 0 ? "warn" : "ok"}
