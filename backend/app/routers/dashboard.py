@@ -16,8 +16,18 @@ def _rows(db, sql):
 
 @router.get("/watchlist")
 def watchlist(db: Session = Depends(get_db)):
-    """Order watchlist via v_order_watchlist (order + product + schedule + material)."""
-    return _rows(db, "SELECT * FROM v_order_watchlist ORDER BY order_id")
+    """Order watchlist via v_order_watchlist (order + product + schedule + material),
+    plus the distinct work centres each order's current schedule touches, so the
+    dashboard can offer a work-centre filter without a second round trip."""
+    return _rows(db, """
+        SELECT w.*, wc.work_centers
+        FROM v_order_watchlist w
+        LEFT JOIN (
+            SELECT order_id, array_agg(DISTINCT work_center ORDER BY work_center) AS work_centers
+            FROM order_operation GROUP BY order_id
+        ) wc ON wc.order_id = w.order_pk
+        ORDER BY w.order_id
+    """)
 
 
 @router.get("/capacity-conflicts")
@@ -90,7 +100,7 @@ def kpis(db: Session = Depends(get_db)):
     """Prototype-faithful KPI set. All six KPIs are derived from ONE consistent
     per-order status classification (on/risk/delay/crit), matching the
     control-tower prototype. Falls back gracefully when nothing is scheduled."""
-    from ..engine.kpi import compute_kpis
+    from ..engine.kpi import compute_kpis, classify_orders, record_snapshot, get_trend
     out = compute_kpis(db)
     # products + open_alerts are cheap extras the dashboard also shows
     out["products"] = db.execute(text("SELECT count(*) FROM product")).scalar() or 0
@@ -100,7 +110,23 @@ def kpis(db: Session = Depends(get_db)):
     # the UI show "schedule last updated N min ago" and avoid stale-view confusion
     out["last_updated"] = db.execute(
         text("SELECT MAX(computed_at) FROM capacity_load")).scalar()
+
+    # trend vs ~24h ago, and record today's snapshot for future comparisons
+    cls = classify_orders(db)
+    delayed_ids = [o.order_id for o in cls["buckets"]["delay"] + cls["buckets"]["crit"]]
+    out["trend"] = get_trend(db, out)
+    record_snapshot(db, out, delayed_ids)
     return out
+
+
+@router.get("/digest")
+def digest(db: Session = Depends(get_db)):
+    """'Since you last checked': new and resolved delayed/critical orders
+    compared to the first snapshot recorded today."""
+    from ..engine.kpi import classify_orders, get_digest
+    cls = classify_orders(db)
+    delayed_ids = [o.order_id for o in cls["buckets"]["delay"] + cls["buckets"]["crit"]]
+    return get_digest(db, delayed_ids)
 
 
 @router.get("/kpi-drilldown/{key}")
