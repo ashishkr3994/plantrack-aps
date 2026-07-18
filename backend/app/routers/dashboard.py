@@ -272,3 +272,31 @@ def delayed_orders(db: Session = Depends(get_db)):
         WHERE d.resolution_status = 'Open' AND d.severity IN ('High','Critical')
         ORDER BY d.severity DESC, d.deviation_minutes DESC NULLS LAST
     """)
+
+
+@router.get("/unconfirmed-orders")
+def unconfirmed_orders(db: Session = Depends(get_db)):
+    """The watch list behind the Unconfirmed KPI: orders with a real
+    deviation (a silent start miss, however long, or a small logged delay
+    below the at-risk threshold) that's too soft -- or, for a silent start
+    miss, too unconfirmed -- to count as at-risk on its own, but worth
+    seeing as a group. Built directly from the same per-order classification
+    the KPIs use, not from deviation_log, since 'unconfirmed' isn't a
+    persisted severity tier.
+    """
+    from ..engine.kpi import classify_orders
+    cls = classify_orders(db)
+    rows = []
+    for o in cls["unconfirmed"]:
+        comp = cls["details"][o.id]
+        rows.append({
+            "order_id": o.order_id,
+            "customer": o.customer,
+            "priority": o.priority,
+            "order_qty": o.order_qty,
+            "committed_delivery_date": o.committed_delivery_date.isoformat() if o.committed_delivery_date else None,
+            "slip_hrs": comp.slip_hrs,
+            "reason": comp.reasons[0].text if comp.reasons else "Minor forecast slip",
+        })
+    rows.sort(key=lambda r: r["slip_hrs"], reverse=True)
+    return rows
