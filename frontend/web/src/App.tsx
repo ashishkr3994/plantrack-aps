@@ -9,39 +9,30 @@ import { Modal, Pill } from "./components/ui";
 import { Login } from "./screens/Login";
 import { Dashboard } from "./screens/Dashboard";
 import { Orders } from "./screens/Orders";
-import { Schedule } from "./screens/Schedule";
 import { Timeline } from "./screens/Timeline";
 import { Capacity } from "./screens/Capacity";
 import { Materials } from "./screens/Materials";
 import { Reschedule } from "./screens/Reschedule";
 import { Events } from "./screens/Events";
-import { DataModel } from "./screens/DataModel";
 import { DelayedOrders } from "./screens/DelayedOrders";
-import { MasterData } from "./screens/MasterData";
-import { Analytics } from "./screens/Analytics";
-import { Configuration } from "./screens/Configuration";
 import { Admin } from "./screens/Admin";
 import { Alerts } from "./screens/Alerts";
-import { ImportData } from "./screens/ImportData";
+import { ImportExport } from "./screens/ImportExport";
+import { SetupReference } from "./screens/SetupReference";
 import { Sandbox } from "./screens/Sandbox";
 
 const NAV: Array<{ to: string; label: string }> = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/alerts", label: "Alerts" },
   { to: "/orders", label: "Orders" },
-  { to: "/schedule", label: "Schedule" },
   { to: "/timeline", label: "Timeline" },
   { to: "/capacity", label: "Capacity" },
   { to: "/materials", label: "Materials & BOM" },
   { to: "/reschedule", label: "Reschedule" },
-  { to: "/delayed", label: "Delayed & critical" },
   { to: "/events", label: "Execution events" },
-  { to: "/analytics", label: "Analytics" },
   { to: "/sandbox", label: "What-if sandbox" },
-  { to: "/import", label: "Import data" },
-  { to: "/configuration", label: "Configuration" },
-  { to: "/master-data", label: "Master data" },
-  { to: "/data-model", label: "Data model" },
+  { to: "/import-export", label: "Import & export" },
+  { to: "/setup", label: "Setup & reference" },
 ];
 
 function LiveBadge() {
@@ -309,19 +300,15 @@ export function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/orders" element={<Orders />} />
-            <Route path="/schedule" element={<Schedule />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/capacity" element={<Capacity />} />
             <Route path="/materials" element={<Materials />} />
             <Route path="/reschedule" element={<Reschedule />} />
             <Route path="/delayed" element={<DelayedOrders />} />
             <Route path="/events" element={<Events />} />
-            <Route path="/master-data" element={<MasterData />} />
-            <Route path="/data-model" element={<DataModel />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/configuration" element={<Configuration />} />
             <Route path="/sandbox" element={<Sandbox />} />
-            <Route path="/import" element={<ImportData />} />
+            <Route path="/import-export" element={<ImportExport />} />
+            <Route path="/setup" element={<SetupReference />} />
             {isAdmin && <Route path="/admin" element={<Admin />} />}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
