@@ -7,7 +7,7 @@ import type {
   AuthUser, TokenResponse, AuditEntry,
   MaterialStatusRow, ImportResult, SandboxOverride, SandboxResult,
   AlertRow, DeviationRow, RecoveryResult, RescheduleLogRow, DelayedOrderRow, UnconfirmedOrderRow, RecommendationResult,
-  DashboardKpis, KpiDrilldown, BottleneckRec, OvertimeRec, LeadTimeRow, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
+  DashboardKpis, DashboardDigest, KpiDrilldown, BottleneckRec, OvertimeRec, LeadTimeRow, CapacityHeatmap, OrderDetail, CapacityCell, ImportResultT,
   GanttData,
 } from "./types";
 
@@ -97,6 +97,7 @@ export const api = {
   capacityConflicts: () => request<Record<string, unknown>[]>("/dashboard/capacity-conflicts"),
   openAlerts: () => request<Record<string, unknown>[]>("/dashboard/open-alerts"),
   kpis: () => request<DashboardKpis>("/dashboard/kpis"),
+  digest: () => request<DashboardDigest>("/dashboard/digest"),
   kpiDrilldown: (key: string) => request<KpiDrilldown>(`/dashboard/kpi-drilldown/${key}`),
   bottleneckRecommendations: () => request<BottleneckRec[]>("/dashboard/bottleneck-recommendations"),
   overtimeRecommendations: () => request<OvertimeRec[]>("/dashboard/overtime-recommendations"),
