@@ -415,6 +415,7 @@ export interface GanttOp {
   order_id: string;
   priority: Priority;
   customer: string;
+  busy_hrs?: number | null;
 }
 
 export interface GanttDowntime {
@@ -494,3 +495,4 @@ export interface RecommendationResult {
   bottleneck_machine?: string | null;
   message: string;
 }
+
