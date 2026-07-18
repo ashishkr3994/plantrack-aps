@@ -602,6 +602,13 @@ function DrillDown({ order, onClose }: { order: SandboxOrderResult; onClose: () 
 
         <div>
           <div className="l" style={{ marginBottom: 6 }}>Schedule (live vs what-if)</div>
+          <p className="muted" style={{ margin: "0 0 6px", fontSize: 11.5 }}>
+            Start/End are wall-clock times; an operation that spans a shift or overnight gap will
+            show a longer Start-to-End span than it was actually busy for. "Busy" is the true
+            machine-processing time and is calendar-independent -- if it matches on both sides,
+            the operation genuinely takes the same amount of work either way, it's just scheduled
+            at a different point in the calendar.
+          </p>
           <div style={{ overflowX: "auto" }}>
             <table className="roomy">
               <thead>
@@ -609,22 +616,34 @@ function DrillDown({ order, onClose }: { order: SandboxOrderResult; onClose: () 
                   <th rowSpan={2} style={{ verticalAlign: "bottom" }}>Stage</th>
                   <th colSpan={2} style={{ textAlign: "center" }} className="muted">Live</th>
                   <th colSpan={2} style={{ textAlign: "center", color: "var(--teal)" }}>What-if</th>
+                  <th colSpan={2} style={{ textAlign: "center" }}>Busy time</th>
                 </tr>
                 <tr>
                   <th className="muted">Start</th><th className="muted">End</th>
                   <th style={{ color: "var(--teal)" }}>Start</th><th style={{ color: "var(--teal)" }}>End</th>
+                  <th className="muted">Live</th><th style={{ color: "var(--teal)" }}>What-if</th>
                 </tr>
               </thead>
               <tbody>
-                {stages.map((s, i) => (
-                  <tr key={i}>
-                    <td>{s.label}{s.parallel && <span className="muted" style={{ fontSize: 10 }}> (parallel)</span>}</td>
-                    <td>{s.live?.start ? fmtDateTime(s.live.start) : "-"}</td>
-                    <td>{s.live?.end ? fmtDateTime(s.live.end) : "-"}</td>
-                    <td>{s.whatif?.start ? fmtDateTime(s.whatif.start) : "-"}</td>
-                    <td>{s.whatif?.end ? fmtDateTime(s.whatif.end) : "-"}</td>
-                  </tr>
-                ))}
+                {stages.map((s, i) => {
+                  const bl = s.live?.busy_hrs;
+                  const bw = s.whatif?.busy_hrs;
+                  const bothBusy = bl != null && bw != null;
+                  const busyDiffers = bothBusy && Math.abs(bl - bw) > 0.05;
+                  return (
+                    <tr key={i}>
+                      <td>{s.label}{s.parallel && <span className="muted" style={{ fontSize: 10 }}> (parallel)</span>}</td>
+                      <td>{s.live?.start ? fmtDateTime(s.live.start) : "-"}</td>
+                      <td>{s.live?.end ? fmtDateTime(s.live.end) : "-"}</td>
+                      <td>{s.whatif?.start ? fmtDateTime(s.whatif.start) : "-"}</td>
+                      <td>{s.whatif?.end ? fmtDateTime(s.whatif.end) : "-"}</td>
+                      <td className="num">{bl != null ? fmtHours(bl) : "-"}</td>
+                      <td className="num" style={busyDiffers ? { background: "var(--warn-bg)", fontWeight: 650 } : undefined}>
+                        {bw != null ? fmtHours(bw) : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
