@@ -366,6 +366,7 @@ export interface DashboardKpis {
   on_time_delivery_pct: number | null;
   orders_at_risk: number;
   delayed_critical: number;
+  unconfirmed: number;
   material_at_risk: number;
   capacity_conflicts: number;
   open_alerts: number;
@@ -484,6 +485,16 @@ export interface DelayedOrderRow {
   generated_at: string;
 }
 
+export interface UnconfirmedOrderRow {
+  order_id: string;
+  customer: string;
+  priority: string;
+  order_qty: number;
+  committed_delivery_date: string | null;
+  slip_hrs: number;
+  reason: string;
+}
+
 export interface RecommendationResult {
   feasible: boolean;
   order_id?: string;
@@ -495,4 +506,3 @@ export interface RecommendationResult {
   bottleneck_machine?: string | null;
   message: string;
 }
-
