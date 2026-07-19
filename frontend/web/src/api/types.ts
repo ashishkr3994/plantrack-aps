@@ -139,6 +139,7 @@ export interface WatchlistRow {
   material_status: string | null;
   planned_delivery_dt: string | null;
   work_centers: string[] | null;
+  health_status: "on" | "risk" | "delay" | "crit" | null;
 }
 
 // --- scheduling / async solve ---
