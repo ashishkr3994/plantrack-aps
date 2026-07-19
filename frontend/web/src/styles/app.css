@@ -69,6 +69,8 @@ button.primary:hover { background: var(--teal-dk); }
 button.primary:disabled { opacity: 0.55; cursor: not-allowed; }
 button.ghost { border-color: transparent; background: transparent; }
 button.danger { color: var(--risk); border-color: var(--risk); }
+button.primary.danger { background: var(--risk); border-color: var(--risk); color: #fff; }
+button.primary.danger:hover { filter: brightness(0.92); }
 
 input, select {
   font: inherit;
