@@ -18,8 +18,16 @@ def _rows(db, sql):
 def watchlist(db: Session = Depends(get_db)):
     """Order watchlist via v_order_watchlist (order + product + schedule + material),
     plus the distinct work centres each order's current schedule touches, so the
-    dashboard can offer a work-centre filter without a second round trip."""
-    return _rows(db, """
+    dashboard can offer a work-centre filter without a second round trip.
+
+    The per-row schedule status uses the SAME classification the KPI engine
+    uses (status from compute_order_status), not a simple buffer_hrs>=0
+    check. Those two disagree in practice -- an order can have a positive
+    buffer_hrs and still be flagged 'at risk' by the richer engine (thin
+    buffer %, material status, etc.), and showing the simple rule here made
+    the watchlist and the KPI/donut contradict each other on the same page."""
+    from ..engine.kpi import classify_orders
+    rows = _rows(db, """
         SELECT w.*, wc.work_centers
         FROM v_order_watchlist w
         LEFT JOIN (
@@ -28,6 +36,11 @@ def watchlist(db: Session = Depends(get_db)):
         ) wc ON wc.order_id = w.order_pk
         ORDER BY w.order_id
     """)
+    cls = classify_orders(db)
+    status_by_pk = {pk: comp.status for pk, comp in cls["details"].items()}
+    for r in rows:
+        r["health_status"] = status_by_pk.get(r["order_pk"])  # 'on' | 'risk' | 'delay' | 'crit' | None (unscheduled)
+    return rows
 
 
 @router.get("/capacity-conflicts")
