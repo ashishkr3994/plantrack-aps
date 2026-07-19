@@ -44,6 +44,18 @@ export function useCreateOrder() {
   });
 }
 
+export function useDeleteOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pk: number) => api.deleteOrder(pk),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.orders });
+      qc.invalidateQueries({ queryKey: qk.summary });
+      qc.invalidateQueries({ queryKey: qk.watchlist });
+    },
+  });
+}
+
 export function useCreateEvent() {
   const qc = useQueryClient();
   return useMutation({
