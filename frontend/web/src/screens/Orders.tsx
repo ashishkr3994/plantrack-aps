@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { useOrders, useProducts, useCreateOrder } from "@/hooks/queries";
+import { useOrders, useProducts, useCreateOrder, useDeleteOrder } from "@/hooks/queries";
 import { Loading, ErrorState, PriorityPill, Modal } from "@/components/ui";
 import { fmtDate, fmtNum } from "@/lib/format";
 import { ApiError } from "@/api/client";
 import { useAuth } from "@/hooks/useAuth";
-import type { OrderCreate, Priority, SchedMode } from "@/api/types";
+import type { OrderCreate, Order, Priority, SchedMode } from "@/api/types";
 
 type SortKey = "order_id" | "committed_delivery_date" | "priority" | "order_qty";
 
@@ -12,6 +12,7 @@ export function Orders() {
   const orders = useOrders();
   const { hasRole } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Order | null>(null);
   const [search, setSearch] = useState("");
   const [prioFilter, setPrioFilter] = useState<"all" | "HIGH" | "MED" | "LOW">("all");
   const [sortKey, setSortKey] = useState<SortKey>("committed_delivery_date");
@@ -80,6 +81,7 @@ export function Orders() {
                   <th className="sortable" onClick={() => toggleSort("committed_delivery_date")}>Committed <span className="sort-caret">{caret("committed_delivery_date")}</span></th>
                   <th className="sortable" onClick={() => toggleSort("priority")}>Priority <span className="sort-caret">{caret("priority")}</span></th>
                   <th>Mode</th><th className="num">Replans</th>
+                  {hasRole("planner") && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -94,6 +96,13 @@ export function Orders() {
                     <td><PriorityPill priority={o.priority} /></td>
                     <td className="muted">{o.sched_mode}</td>
                     <td className="num">{o.replan_count}</td>
+                    {hasRole("planner") && (
+                      <td>
+                        <button className="ghost danger" onClick={() => setConfirmDelete(o)} title="Delete this order">
+                          Delete
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -103,7 +112,44 @@ export function Orders() {
       </section>
 
       {showCreate && <CreateOrderModal onClose={() => setShowCreate(false)} />}
+      {confirmDelete && <DeleteOrderModal order={confirmDelete} onClose={() => setConfirmDelete(null)} />}
     </div>
+  );
+}
+
+function DeleteOrderModal({ order, onClose }: { order: Order; onClose: () => void }) {
+  const del = useDeleteOrder();
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    setError(null);
+    try {
+      await del.mutateAsync(order.id);
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't delete this order.");
+    }
+  };
+
+  return (
+    <Modal
+      title={`Delete ${order.order_id}?`}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} disabled={del.isPending}>Cancel</button>
+          <button className="primary danger" onClick={confirm} disabled={del.isPending}>
+            {del.isPending ? "Deleting..." : "Delete order"}
+          </button>
+        </>
+      }
+    >
+      {error && <div className="banner err">{error}</div>}
+      <p style={{ margin: 0 }}>
+        This permanently removes <strong>{order.order_id}</strong> ({order.customer}) and any schedule,
+        material status, or logged events tied to it. This can't be undone.
+      </p>
+    </Modal>
   );
 }
 
