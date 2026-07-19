@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, RadialBarChart, RadialBar } from "recharts";
+import { PieChart, Pie, Cell, Sector, BarChart, Bar, XAxis, YAxis, LabelList, RadialBarChart, RadialBar } from "recharts";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, PriorityPill, Modal } from "@/components/ui";
 import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime, fmtHours } from "@/lib/format";
@@ -117,7 +117,7 @@ function Gauge({ label, pct, trend, onClick }: {
   const color = v >= 90 ? "var(--ok)" : v >= 80 ? "var(--warn)" : "var(--risk)";
   const data = [{ value: v }];
   return (
-    <div className="card" style={{ cursor: "pointer", textAlign: "center", padding: "10px 6px" }}
+    <div className="card kpi-tile" style={{ cursor: "pointer", textAlign: "center", padding: "10px 6px" }}
       onClick={onClick} title="Click for the orders behind this metric.">
       <div style={{ position: "relative", width: 84, height: 84, margin: "0 auto" }}>
         <RadialBarChart width={84} height={84} cx="50%" cy="50%" innerRadius="72%" outerRadius="100%"
@@ -141,10 +141,23 @@ function Gauge({ label, pct, trend, onClick }: {
 
 const HEALTH_COLORS = { on: "var(--ok)", unconfirmed: "#8a97a0", risk: "var(--warn)", delayed: "var(--risk)" };
 
+function DonutActiveShape(props: any) {
+  // recharts passes the current segment's geometry -- grow the outer radius a
+  // touch and brighten slightly, the standard "pop out on hover" pie pattern.
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+  return (
+    <g>
+      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 5}
+        startAngle={startAngle} endAngle={endAngle} fill={fill} style={{ filter: "brightness(1.12)" }} />
+    </g>
+  );
+}
+
 function HealthDonut({ kpis, onSetDrillKey, onNav }: {
   kpis: { orders: number; orders_at_risk: number; delayed_critical: number; unconfirmed: number };
   onSetDrillKey: (k: string) => void; onNav: (path: string) => void;
 }) {
+  const [hoverIdx, setHoverIdx] = useState<number | undefined>(undefined);
   const onTrack = Math.max(0, kpis.orders - kpis.orders_at_risk - kpis.unconfirmed);
   const segments = [
     { key: "on", label: "On track", value: onTrack, color: HEALTH_COLORS.on, onClick: undefined },
@@ -157,12 +170,14 @@ function HealthDonut({ kpis, onSetDrillKey, onNav }: {
   ].filter((s) => s.value > 0);
 
   return (
-    <div className="card" style={{ padding: "10px 14px" }}>
+    <div className="card chart-card" style={{ padding: "10px 14px" }}>
       <div className="l" style={{ marginBottom: 4 }}>Order health distribution</div>
       <div className="row" style={{ gap: 12, alignItems: "center" }}>
         <div style={{ width: 90, height: 90, flex: "none" }}>
           <PieChart width={90} height={90}>
             <Pie data={segments} dataKey="value" innerRadius={26} outerRadius={42} isAnimationActive={false}
+              activeIndex={hoverIdx} activeShape={DonutActiveShape}
+              onMouseEnter={(_, idx) => setHoverIdx(idx)} onMouseLeave={() => setHoverIdx(undefined)}
               onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
               {segments.map((s) => (
                 <Cell key={s.key} fill={s.color} cursor={s.onClick ? "pointer" : "default"} />
@@ -184,26 +199,54 @@ function HealthDonut({ kpis, onSetDrillKey, onNav }: {
   );
 }
 
+function makeIssuesYTick(items: { label: string; sub?: string }[]) {
+  return function IssuesYTick(props: any) {
+    const { x, y, payload } = props;
+    const item = items.find((i) => i.label === payload.value);
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text x={0} y={0} dy={item?.sub ? -2 : 3} textAnchor="end" fontSize={10} fill="var(--ink)">
+          {payload.value}
+        </text>
+        {item?.sub && (
+          <text x={0} y={0} dy={9} textAnchor="end" fontSize={8.5} fill="var(--ink-2)">
+            {item.sub}
+          </text>
+        )}
+      </g>
+    );
+  };
+}
+
 function IssuesBar({ kpis, onSetDrillKey, onNav }: {
   kpis: { material_at_risk: number; capacity_conflicts: number; unconfirmed: number; delayed_critical: number };
   onSetDrillKey: (k: string) => void; onNav: (path: string) => void;
 }) {
+  const [hoverIdx, setHoverIdx] = useState<number | undefined>(undefined);
   const items = [
-    { label: "Material", value: kpis.material_at_risk, color: "var(--warn)", onClick: () => onSetDrillKey("material") },
-    { label: "Capacity", value: kpis.capacity_conflicts, color: "#2a78d6", onClick: () => onNav("/capacity") },
-    { label: "Watch list", value: kpis.unconfirmed, color: HEALTH_COLORS.unconfirmed, onClick: () => onSetDrillKey("unconfirmed") },
-    { label: "Delayed", value: kpis.delayed_critical, color: "var(--risk)", onClick: () => onNav("/delayed") },
+    { label: "Material Risk", value: kpis.material_at_risk, color: "var(--warn)", onClick: () => onSetDrillKey("material") },
+    { label: "Capacity Constraint", value: kpis.capacity_conflicts, color: "#2a78d6", onClick: () => onNav("/capacity") },
+    { label: "Watch list", sub: "Unconfirmed deviation", value: kpis.unconfirmed, color: HEALTH_COLORS.unconfirmed,
+      onClick: () => onSetDrillKey("unconfirmed") },
+    { label: "Delayed Orders", value: kpis.delayed_critical, color: "var(--risk)", onClick: () => onNav("/delayed") },
   ];
+  const yTick = useMemo(() => makeIssuesYTick(items), [items]);
+
   return (
-    <div className="card" style={{ padding: "10px 14px" }}>
+    <div className="card chart-card" style={{ padding: "10px 14px" }}>
       <div className="l" style={{ marginBottom: 4 }}>Issues by category</div>
-      <BarChart width={220} height={100} data={items} layout="vertical"
-        margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
-        <XAxis type="number" hide />
-        <YAxis type="category" dataKey="label" width={62} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+      <BarChart width={260} height={110} data={items} layout="vertical"
+        margin={{ top: 2, right: 26, bottom: 2, left: 0 }}>
+        <XAxis type="number" hide domain={[0, (max: number) => Math.max(1, max)]} />
+        <YAxis type="category" dataKey="label" width={92} tick={yTick} axisLine={false} tickLine={false} />
         <Bar dataKey="value" radius={3} barSize={14} isAnimationActive={false}
+          onMouseEnter={(_, idx) => setHoverIdx(idx)} onMouseLeave={() => setHoverIdx(undefined)}
           onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
-          {items.map((it, i) => <Cell key={i} fill={it.color} cursor="pointer" />)}
+          <LabelList dataKey="value" position="right" style={{ fontSize: 11, fontWeight: 650, fill: "var(--ink)" }} />
+          {items.map((it, i) => (
+            <Cell key={i} fill={it.color} cursor="pointer"
+              style={i === hoverIdx ? { filter: "brightness(1.18)" } : undefined} />
+          ))}
         </Bar>
       </BarChart>
     </div>
