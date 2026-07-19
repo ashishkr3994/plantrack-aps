@@ -1,3 +1,4 @@
+
 """Prototype-faithful dashboard KPIs.
 
 Mirrors the control-tower prototype: every KPI is derived from ONE consistent
@@ -159,7 +160,9 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
             SELECT o.order_id, o.product_id, o.customer, o.priority,
                    ms.status, ms.risk_reason, ms.slip_days
             FROM material_status ms JOIN order_header o ON o.id = ms.order_id
-            WHERE ms.status IN ('late','risk') ORDER BY o.order_id
+            WHERE ms.status = 'risk'
+               OR (ms.status = 'late' AND ms.actual_ready_dt IS NULL)
+            ORDER BY o.order_id
         """))
         rows = []
         for r in mats.fetchall():
@@ -271,4 +274,4 @@ def get_digest(db: Session, current_delayed_ids: list[str]) -> dict:
         "new": sorted(current_ids - prior_ids),
         "resolved": sorted(prior_ids - current_ids),
         "since": row["captured_at"].isoformat(),
-    }  
+    }
