@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { PieChart, Pie, Cell, Sector, BarChart, Bar, XAxis, YAxis, LabelList, RadialBarChart, RadialBar } from "recharts";
+import { PieChart, Pie, Cell, Sector, BarChart, Bar, XAxis, YAxis, LabelList, RadialBarChart, RadialBar, ResponsiveContainer } from "recharts";
 import { api } from "@/api/client";
 import { Loading, ErrorState, Pill, statusTone, PriorityPill, Modal } from "@/components/ui";
 import { fmtDate, fmtDateTime as fmtDT, fmtRelativeTime, fmtHours } from "@/lib/format";
@@ -29,7 +29,7 @@ export function Dashboard() {
           an issues-by-category bar -- replaces the old plain 7-KPI-card grid.
           Every segment/bar is clickable and goes to the exact same
           destination its old KPI card did. */}
-      <section className="grid" style={{ gridTemplateColumns: "150px 150px 1fr 1fr", gap: 14 }}>
+      <section className="grid" style={{ gridTemplateColumns: "150px 150px minmax(240px, 1fr) minmax(240px, 1fr)", gap: 14 }}>
         {kpis.isLoading && <Loading label="Loading metrics..." />}
         {kpis.isError && <ErrorState message="Couldn't load metrics." onRetry={() => kpis.refetch()} />}
         {kpis.data && (
@@ -73,24 +73,38 @@ function Digest({ digest, onOpenOrder }: {
   digest?: { new: string[]; resolved: string[]; since: string | null };
   onOpenOrder: (oid: string) => void;
 }) {
+  const [dismissedOrders, setDismissedOrders] = useState<Set<string>>(new Set());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
   if (!digest || (digest.new.length === 0 && digest.resolved.length === 0)) return null;
+  const newOrders = digest.new.filter((oid) => !dismissedOrders.has(oid));
+  if (bannerDismissed || (newOrders.length === 0 && digest.resolved.length === 0)) return null;
+
   const since = digest.since ? fmtRelativeTime(digest.since) : "your last check";
+  const dismissOne = (oid: string) => setDismissedOrders((prev) => new Set(prev).add(oid));
+
   return (
-    <div className="banner" style={{ background: "var(--surface-1, #f4f6f7)", border: "1px solid var(--line)", fontSize: 12.5 }}>
+    <div className="banner" style={{ background: "var(--surface-1, #f4f6f7)", border: "1px solid var(--line)", fontSize: 12.5, position: "relative", paddingRight: 30 }}>
+      <button className="ghost" onClick={() => setBannerDismissed(true)} title="Dismiss this notice"
+        style={{ position: "absolute", top: 4, right: 4, padding: "2px 7px", fontSize: 12, lineHeight: 1 }}>
+        &times;
+      </button>
       Since {since}:{" "}
-      {digest.new.length > 0 && (
-        <span style={{ color: "var(--risk)", fontWeight: 650 }}>+{digest.new.length} new critical</span>
+      {newOrders.length > 0 && (
+        <span style={{ color: "var(--risk)", fontWeight: 650 }}>+{newOrders.length} new critical</span>
       )}
-      {digest.new.length > 0 && digest.resolved.length > 0 && ", "}
+      {newOrders.length > 0 && digest.resolved.length > 0 && ", "}
       {digest.resolved.length > 0 && (
         <span style={{ color: "var(--ok)", fontWeight: 650 }}>{digest.resolved.length} resolved</span>
       )}
-      {digest.new.length > 0 && (
+      {newOrders.length > 0 && (
         <span className="muted" style={{ marginLeft: 8 }}>
-          ({digest.new.map((oid, i) => (
+          ({newOrders.map((oid, i) => (
             <span key={oid}>
               {i > 0 && ", "}
               <span style={{ color: "var(--teal)", cursor: "pointer" }} onClick={() => onOpenOrder(oid)}>{oid}</span>
+              <span style={{ cursor: "pointer", marginLeft: 2, color: "var(--ink-2)" }}
+                title={`Close - I've noted ${oid}`} onClick={() => dismissOne(oid)}>&times;</span>
             </span>
           ))})
         </span>
@@ -235,20 +249,22 @@ function IssuesBar({ kpis, onSetDrillKey, onNav }: {
   return (
     <div className="card chart-card" style={{ padding: "10px 14px" }}>
       <div className="l" style={{ marginBottom: 4 }}>Issues by category</div>
-      <BarChart width={260} height={110} data={items} layout="vertical"
-        margin={{ top: 2, right: 26, bottom: 2, left: 0 }}>
-        <XAxis type="number" hide domain={[0, (max: number) => Math.max(1, max)]} />
-        <YAxis type="category" dataKey="label" width={92} tick={yTick} axisLine={false} tickLine={false} />
-        <Bar dataKey="value" radius={3} barSize={14} isAnimationActive={false}
-          onMouseEnter={(_, idx) => setHoverIdx(idx)} onMouseLeave={() => setHoverIdx(undefined)}
-          onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
-          <LabelList dataKey="value" position="right" style={{ fontSize: 11, fontWeight: 650, fill: "var(--ink)" }} />
-          {items.map((it, i) => (
-            <Cell key={i} fill={it.color} cursor="pointer"
-              style={i === hoverIdx ? { filter: "brightness(1.18)" } : undefined} />
-          ))}
-        </Bar>
-      </BarChart>
+      <ResponsiveContainer width="100%" height={116} minWidth={220}>
+        <BarChart data={items} layout="vertical"
+          margin={{ top: 2, right: 30, bottom: 2, left: 0 }}>
+          <XAxis type="number" hide domain={[0, (max: number) => Math.max(1, max)]} />
+          <YAxis type="category" dataKey="label" width={108} tick={yTick} axisLine={false} tickLine={false} />
+          <Bar dataKey="value" radius={3} barSize={14} isAnimationActive={false}
+            onMouseEnter={(_, idx) => setHoverIdx(idx)} onMouseLeave={() => setHoverIdx(undefined)}
+            onClick={(entry) => { const fn = (entry as { payload?: { onClick?: () => void } })?.payload?.onClick; if (fn) fn(); }}>
+            <LabelList dataKey="value" position="right" style={{ fontSize: 11, fontWeight: 650, fill: "var(--ink)" }} />
+            {items.map((it, i) => (
+              <Cell key={i} fill={it.color} cursor="pointer"
+                style={i === hoverIdx ? { filter: "brightness(1.18)" } : undefined} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
