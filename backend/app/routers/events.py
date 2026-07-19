@@ -2,7 +2,11 @@
 
 Mirrors the prototype's event logging. A 'material_ready' event confirms
 material arrival: it stamps material_status.actual_ready_dt and re-evaluates
-material risk so the KPI reflects reality immediately. Writes require planner+.
+material risk so the KPI reflects reality immediately. If the confirmed
+arrival was genuinely late, it also automatically runs a targeted
+single-order recovery -- see create_event for why this matters: showing
+"on track" only ever reflects the REAL, persisted, executable schedule,
+never a hypothetical "could be fixed" possibility. Writes require planner+.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -11,6 +15,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..deps import require_role, audit
 from ..engine.material_risk import evaluate_material_risk
+from ..engine.recovery import recover_order, RecoveryOptions
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -28,7 +33,7 @@ def list_events(order_id: int | None = None, db: Session = Depends(get_db)):
     return q.order_by(models.ActualEvent.event_timestamp.desc()).all()
 
 
-@router.post("", response_model=schemas.EventRead, status_code=201)
+@router.post("", status_code=201)
 def create_event(payload: schemas.EventCreate,
                  actor: models.AppUser = Depends(require_role("planner")),
                  db: Session = Depends(get_db)):
@@ -53,6 +58,7 @@ def create_event(payload: schemas.EventCreate,
     db.commit()
     db.refresh(obj)
 
+    recovery_outcome = None
     # material_ready confirms arrival -> update material status + re-evaluate risk
     if payload.event_type == "material_ready":
         ms = db.query(models.MaterialStatus).filter_by(order_id=order.id).first()
@@ -60,7 +66,56 @@ def create_event(payload: schemas.EventCreate,
             ms.actual_ready_dt = payload.event_timestamp
             db.commit()
         evaluate_material_risk(db)
+        db.refresh(ms) if ms else None
+
+        # Only bother running a recovery if the confirmed arrival was
+        # genuinely late (status == "late" after re-evaluation) -- an
+        # on-time confirmation has nothing to recover from. This is
+        # deliberately synchronous: this deployment runs single-process
+        # (PLANTRACK_SINGLE_PROCESS=1), so there's no real background-task
+        # option here anyway, and material confirmations are infrequent
+        # enough that a few seconds of added latency for a genuinely useful
+        # auto-correction is a fair trade.
+        if ms and ms.status == "late":
+            try:
+                result = recover_order(
+                    db, order.order_id,
+                    RecoveryOptions(mode="forward", time_budget_s=10),
+                    performed_by=actor.username)
+            except ValueError:
+                result = {"feasible": False}
+            if result.get("feasible") and result.get("on_time"):
+                recovery_outcome = {
+                    "status": "recovered", "on_time": True,
+                    "message": f"Material confirmed late; {order.order_id} was "
+                               "automatically recovered and is back on schedule.",
+                    "new_delivery": result.get("new_delivery"),
+                }
+                audit(db, actor, "auto_recover", "order", order.order_id,
+                      {"trigger": "material_ready", "outcome": "on_time"})
+            elif result.get("feasible"):
+                recovery_outcome = {
+                    "status": "recovered_late", "on_time": False,
+                    "message": f"Material confirmed late; {order.order_id} was "
+                               "rescheduled but is still behind -- manual action "
+                               "(overtime, expedite) may help.",
+                    "lateness_min": result.get("lateness_min"),
+                }
+                audit(db, actor, "auto_recover", "order", order.order_id,
+                      {"trigger": "material_ready", "outcome": "still_late"})
+            else:
+                recovery_outcome = {
+                    "status": "infeasible", "on_time": False,
+                    "message": f"Material confirmed late; no feasible automatic "
+                               f"recovery was found for {order.order_id} -- "
+                               "manual intervention is needed.",
+                }
+                audit(db, actor, "auto_recover", "order", order.order_id,
+                      {"trigger": "material_ready", "outcome": "infeasible"})
 
     audit(db, actor, "log_event", "event", obj.event_id,
           {"type": payload.event_type, "order_id": order.order_id})
-    return obj
+
+    out = schemas.EventRead.model_validate(obj).model_dump()
+    out["recovery_outcome"] = recovery_outcome
+    return out  
