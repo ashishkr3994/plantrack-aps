@@ -294,11 +294,7 @@ function OrderWatchlist({ watch, onOpenOrder }: {
                   <td>{fmtDate(r.planned_delivery_dt)}</td>
                   <td><BufferBar hrs={r.buffer_hrs} /></td>
                   <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
-                  <td>{r.schedule_status
-                    ? (Number(r.buffer_hrs) < 0
-                        ? <Pill tone="risk">Late</Pill>
-                        : <Pill tone="ok">On track</Pill>)
-                    : <span className="muted">not scheduled</span>}</td>
+                  <td><HealthPill status={r.health_status} /></td>
                 </tr>
               ))}
             </tbody>
@@ -317,6 +313,14 @@ function OrderWatchlist({ watch, onOpenOrder }: {
     </section>
   );
 }
+function HealthPill({ status }: { status: string | null | undefined }) {
+  if (!status) return <span className="muted">not scheduled</span>;
+  if (status === "on") return <Pill tone="ok">On track</Pill>;
+  if (status === "risk") return <Pill tone="warn">At risk</Pill>;
+  if (status === "delay") return <Pill tone="warn">Delayed</Pill>;
+  return <Pill tone="risk">Critical</Pill>;
+}
+
 function BufferBar({ hrs }: { hrs: unknown }) {
   if (hrs == null || typeof hrs !== "number") return <span className="muted">-</span>;
   const pctVal = Math.max(0, Math.min(100, (hrs / 72) * 100));
