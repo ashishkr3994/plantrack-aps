@@ -80,6 +80,21 @@ def _aware(dt):
     return dt
 
 
+def _material_still_unresolved(ms: "models.MaterialStatus") -> bool:
+    """A material status of 'late' covers two different situations that share
+    the same string: (a) still missing -- planned ready date passed and
+    nothing confirmed -- a real, ongoing problem, or (b) confirmed ready, just
+    later than planned -- a resolved historical fact. Only (a) should keep an
+    order flagged at-risk; once actual_ready_dt is set, the material IS here,
+    however tardy, and shouldn't block the order's health forever. status
+    stays 'late' either way, correctly preserving the historical record."""
+    if ms.status == "risk":
+        return True
+    if ms.status == "late":
+        return ms.actual_ready_dt is None
+    return False
+
+
 def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
                          thresholds: dict) -> OrderStatus | None:
     sched = (db.query(models.PlannedSchedule)
@@ -221,12 +236,16 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     elif escalation_hrs > thresholds["delay_slip_hrs"]:
         status = "delay"
     elif (escalation_hrs > thresholds["risk_slip_hrs"]
-          or (ms and ms.status in ("late", "risk"))):
+          or (ms and _material_still_unresolved(ms))):
         # NOTE: buffer erosion alone no longer triggers 'risk'. Just-in-time /
         # load-levelled plans legitimately finish close to the due date (thin
         # buffer) without being late, so buffer_health < buf_crit is kept only
         # as a contributing reason chip (added above) rather than a standalone
-        # trigger. An order is at risk only for real slip or material issues.
+        # trigger. An order is at risk only for real slip or material issues
+        # that are STILL UNRESOLVED -- a material that arrived late but has
+        # since been confirmed ready (actual_ready_dt is set) is a resolved
+        # historical fact, not an ongoing blocker, and stops counting here
+        # even though its status correctly stays "late" for the record.
         status = "risk"
 
     # adherence is deliberately more sensitive than status: it uses the FULL
@@ -344,5 +363,3 @@ def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
     if alerts_made:
         publish("alert_raised", {"count": alerts_made})
     return {"alerts": alerts_made, "deviations": deviations_made, "status_counts": status_counts}
-
-
