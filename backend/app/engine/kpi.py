@@ -176,16 +176,13 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
                 "rows": rows}
 
     if key == "otd":
-        res = db.execute(text("""
-            SELECT o.order_id, o.product_id, o.customer, o.priority
-            FROM planned_schedule ps JOIN order_header o ON o.id = ps.order_id
-            WHERE ps.is_current
-              AND ps.planned_delivery_dt > o.committed_delivery_date::timestamptz
-            ORDER BY o.order_id
-        """))
-        rows = [dict(zip(res.keys(), r)) for r in res.fetchall()]
+        breach_pks = db.execute(text("""
+            SELECT o.id FROM planned_schedule ps JOIN order_header o ON o.id = ps.order_id
+            WHERE ps.is_current AND ps.planned_delivery_dt > o.committed_delivery_date::timestamptz
+        """)).scalars().all()
+        orders = [o for o in cls["orders"] if o.id in set(breach_pks)]
         return {"title": "On-time delivery - orders breaching committed date",
-                "subtitle": "Forecast delivery later than committed", "rows": rows}
+                "subtitle": "Forecast delivery later than committed", "rows": rows_for(orders)}
 
     if key == "capacity":
         res = db.execute(text("""
