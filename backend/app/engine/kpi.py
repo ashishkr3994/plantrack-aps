@@ -91,7 +91,8 @@ def compute_kpis(db: Session, now: datetime | None = None) -> dict:
     otd_pct = round(100.0 * otd_count / total) if total else None
 
     material_at_risk = db.execute(text(
-        "SELECT count(*) FROM material_status WHERE status IN ('late','risk')"
+        "SELECT count(*) FROM material_status "
+        "WHERE status = 'risk' OR (status = 'late' AND actual_ready_dt IS NULL)"
     )).scalar() or 0
 
     capacity_conflicts = db.execute(text(
@@ -270,4 +271,4 @@ def get_digest(db: Session, current_delayed_ids: list[str]) -> dict:
         "new": sorted(current_ids - prior_ids),
         "resolved": sorted(prior_ids - current_ids),
         "since": row["captured_at"].isoformat(),
-    }
+    }  
