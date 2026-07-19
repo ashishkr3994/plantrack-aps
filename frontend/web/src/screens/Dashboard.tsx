@@ -147,7 +147,7 @@ function DonutActiveShape(props: any) {
   const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
   return (
     <g>
-      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 5}
+      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 3}
         startAngle={startAngle} endAngle={endAngle} fill={fill} style={{ filter: "brightness(1.12)" }} />
     </g>
   );
