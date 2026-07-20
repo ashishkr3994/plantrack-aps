@@ -1,3 +1,4 @@
+
 """Working-time calendar: convert between wall-clock datetimes and a flat
 'working-minute' timeline that the CP-SAT model optimises in.
 
@@ -28,15 +29,19 @@ class WorkingCalendar:
 
     def to_datetime(self, working_min: int) -> datetime:
         """Map a working-minute offset (from origin) to a wall-clock datetime,
-        walking forward over working days only. Guaranteed monotonic: a larger
-        working_min never maps to an earlier wall-clock time."""
-        wm = max(0, int(working_min))
-        full_days, rem = divmod(wm, self.minutes_per_day)
-        # Find the first working day on/after the origin date (day index 0).
+        walking forward over working days only."""
+        full_days, rem = divmod(int(working_min), self.minutes_per_day)
+        # Snap to the first valid working day AT OR AFTER the origin BEFORE
+        # counting full_days forward. If this snap happened only at the end
+        # (after the full_days loop), an origin that itself falls on a
+        # non-working day (e.g. a solve or demo reset run on a Sunday) made
+        # minute 0 and minute `minutes_per_day` collapse onto the SAME
+        # calendar day instead of consecutive working days -- a real bug,
+        # confirmed to corrupt persisted schedules (planned_end before
+        # planned_start) whenever "now" happens to fall on a Sunday.
         d = self.origin.date()
         while not self.is_working_day(d):
             d = d + timedelta(days=1)
-        # Advance forward by `full_days` additional WORKING days.
         counted = 0
         while counted < full_days:
             d = d + timedelta(days=1)
@@ -57,3 +62,4 @@ class WorkingCalendar:
                 days += 1
             d = d + timedelta(days=1)
         return days * self.minutes_per_day
+
