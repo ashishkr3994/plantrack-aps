@@ -2,12 +2,21 @@
 operations, and flag overloaded cells. Populates capacity_load (which the
 Capacity screen and the deviation engine's capacity signal both read).
 
-Demand for a day = sum of operation durations whose planned window falls on that
-day (simple day-bucketing by planned_start). Available minutes come from the
-plant calendar (sum of shift available_min), defaulting to 960 (two 8h shifts).
+Demand for a day = the actual working minutes of every operation that overlap
+that day's shift window(s), prorated across every calendar day the operation
+spans -- NOT the operation's whole duration dumped onto the single day its
+planned_start happens to fall on. An operation that runs from Tuesday evening
+into Wednesday morning genuinely occupies part of both days; counting its
+full duration against only one of them (the previous behaviour) made the
+demand total disagree with the "which orders overlap this day" drill-down,
+which correctly lists every order touching the day. See capacity_cell() in
+routers/dashboard.py for that drill-down query.
+
+Available minutes come from the plant calendar (sum of shift available_min
+on working days), defaulting to 600 (one 10h shift).
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, time, timedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -19,35 +28,67 @@ DEFAULT_AVAILABLE_MIN = 600  # single plant, one 10h shift
 
 def compute_capacity_load(db: Session) -> dict:
     """Recompute capacity_load from order_operation rows. Returns a summary."""
-    # available minutes per day: total across active shifts (single plant model)
-    avail = db.execute(text(
-        "SELECT COALESCE(SUM(available_min),0) FROM plant_calendar WHERE NOT is_holiday")).scalar()
-    available_min = int(avail) if avail and int(avail) > 0 else DEFAULT_AVAILABLE_MIN
+    # Shift windows: each (start_time, end_time) applies on every non-holiday
+    # day. Matches WorkingCalendar's own notion of a working day exactly
+    # (Sunday off, plus explicit holiday_date rows) -- days_active isn't
+    # consulted here because the solver itself doesn't consult it either
+    # (see engine/calendar.py); keeping capacity's definition of "working day"
+    # identical to the solver's avoids yet another source of disagreement.
+    shifts = db.execute(text(
+        "SELECT start_time, end_time, available_min FROM plant_calendar WHERE NOT is_holiday"
+    )).fetchall()
+    available_min = sum(int(s.available_min or 0) for s in shifts) or DEFAULT_AVAILABLE_MIN
+    shift_windows = [(s.start_time, s.end_time) for s in shifts if s.start_time and s.end_time]
+    if not shift_windows:
+        shift_windows = [(time(6, 0), time(22, 0))]  # fallback: matches DEFAULT_AVAILABLE_MIN's span
 
-    # demand per (work_center, day) from scheduled operations
-    rows = db.execute(text("""
-        SELECT work_center,
-               (planned_start AT TIME ZONE 'UTC')::date AS d,
-               COALESCE(SUM(duration_mins), 0) AS demand
-        FROM order_operation
-        WHERE planned_start IS NOT NULL
-        GROUP BY work_center, (planned_start AT TIME ZONE 'UTC')::date
+    holidays = {
+        row.holiday_date for row in db.execute(text(
+            "SELECT holiday_date FROM plant_calendar WHERE is_holiday AND holiday_date IS NOT NULL"
+        )).fetchall()
+    }
+
+    def is_working_day(d: date) -> bool:
+        return d.weekday() != 6 and d not in holidays  # Sunday off, matches calendar.py
+
+    ops = db.execute(text("""
+        SELECT oo.work_center, oo.planned_start, oo.planned_end
+        FROM order_operation oo
+        JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+        WHERE oo.planned_start IS NOT NULL AND oo.planned_end IS NOT NULL
     """)).fetchall()
+
+    # accumulate prorated minutes per (work_center, day)
+    demand: dict[tuple[str, date], float] = {}
+    for wc, p_start, p_end in ops:
+        if p_end <= p_start:
+            continue
+        d = p_start.date()
+        while d <= p_end.date():
+            if is_working_day(d):
+                for shift_start, shift_end in shift_windows:
+                    win_start = datetime.combine(d, shift_start, tzinfo=p_start.tzinfo)
+                    win_end = datetime.combine(d, shift_end, tzinfo=p_start.tzinfo)
+                    overlap = min(p_end, win_end) - max(p_start, win_start)
+                    minutes = max(0.0, overlap.total_seconds() / 60)
+                    if minutes > 0:
+                        key = (wc, d)
+                        demand[key] = demand.get(key, 0.0) + minutes
+            d += timedelta(days=1)
 
     db.execute(text("DELETE FROM capacity_load"))
     now = datetime.now(timezone.utc)
     overloaded = 0
-    for wc, d, demand in rows:
-        demand = float(demand or 0)
-        load_pct = round(demand / available_min * 100, 2) if available_min else 0
-        is_over = demand > available_min
+    for (wc, d), total_min in demand.items():
+        load_pct = round(total_min / available_min * 100, 2) if available_min else 0
+        is_over = total_min > available_min
         if is_over:
             overloaded += 1
         db.add(models.CapacityLoad(
             work_center=wc, load_date=d, available_min=available_min,
-            demand_min=demand, load_pct=load_pct, overloaded=is_over, computed_at=now))
+            demand_min=total_min, load_pct=load_pct, overloaded=is_over, computed_at=now))
     db.commit()
-    return {"cells": len(rows), "overloaded": overloaded, "available_min_per_day": available_min}
+    return {"cells": len(demand), "overloaded": overloaded, "available_min_per_day": available_min}
 
 
 def bottleneck_recommendations(db: Session, min_overloaded_days: int = 2) -> list[dict]:
