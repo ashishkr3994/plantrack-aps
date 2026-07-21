@@ -103,7 +103,21 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
         if row.holiday_date:
             holidays.add(row.holiday_date)
 
-    cal = WorkingCalendar(origin, minutes_per_day=minutes_per_day, holidays=holidays)
+    # Working-day start hour: read from the actual configured shift, rather
+    # than falling back to WorkingCalendar's class default (6am). Using the
+    # wrong start hour doesn't change a shift's length, but shifts every
+    # operation's wall-clock placement earlier than it actually is -- e.g.
+    # scheduling against a 10am-8pm shift's minutes as if the day started at
+    # 6am makes an operation's real 10am start show up as 6am. With multiple
+    # active shifts configured, the earliest start hour is used, matching
+    # "the working day begins when the first shift starts."
+    shift_rows = db.query(models.PlantCalendar).filter(
+        models.PlantCalendar.is_holiday.is_(False),
+        models.PlantCalendar.start_time.isnot(None)).all()
+    work_start_hour = min((r.start_time.hour for r in shift_rows), default=6)
+
+    cal = WorkingCalendar(origin, minutes_per_day=minutes_per_day, holidays=holidays,
+                          work_start_hour=work_start_hour)
 
     # routings -> {route_id: [OpInput]}
     routes: dict[str, list[OpInput]] = {}
