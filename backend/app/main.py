@@ -16,7 +16,7 @@ from sqlalchemy import text
 from .config import settings, enforce_production_safety
 from .database import engine
 from .routers import (products, orders, bom, events, routings, dashboard, schedule, datamodel,
-                      auth, audit, materials, imports, sandbox, alerts)
+                      auth, audit, materials, imports, sandbox, alerts, admin)
 from .ws import router as ws_router
 from .inproc_scheduler import start_if_enabled
 
@@ -57,6 +57,7 @@ app.include_router(imports.router)
 app.include_router(sandbox.router)
 app.include_router(alerts.router)
 app.include_router(datamodel.router)
+app.include_router(admin.router)
 app.include_router(ws_router)
 
 
@@ -91,8 +92,6 @@ def ready():
 
 @app.get("/", tags=["meta"], include_in_schema=False)
 def root():
-    # When the SPA is served (PLANTRACK_STATIC_DIR set), let the catch-all below
-    # return index.html instead of this JSON. Only respond here in API-only mode.
     if os.environ.get("PLANTRACK_STATIC_DIR"):
         from fastapi.responses import FileResponse
         sd = os.environ["PLANTRACK_STATIC_DIR"]
@@ -104,9 +103,6 @@ def root():
 
 
 # ---- serve the built frontend (single-service deploy) ----
-# When a built SPA is present (PLANTRACK_STATIC_DIR), serve it so one web service
-# hosts both the API and the UI. API routes above take precedence; everything
-# else falls through to index.html for client-side routing.
 _static_dir = os.environ.get("PLANTRACK_STATIC_DIR", "")
 if _static_dir and os.path.isdir(_static_dir):
     from fastapi.staticfiles import StaticFiles
