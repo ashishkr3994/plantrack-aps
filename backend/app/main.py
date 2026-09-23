@@ -1,4 +1,4 @@
-"""PlanTrack APS - FastAPI application entrypoint.
+"""PlanTrack APS — FastAPI application entrypoint.
 
 Run (dev):
     cd backend
@@ -15,15 +15,15 @@ from sqlalchemy import text
 
 from .config import settings, enforce_production_safety
 from .database import engine
-from .routers import (products, orders, bom, events, routings, dashboard, admin, schedule, datamodel,
-                      auth, audit, materials, imports, sandbox, alerts, lead_times)
+from .routers import (products, orders, bom, events, routings, dashboard, schedule, datamodel,
+                      auth, audit, materials, imports, sandbox, alerts, debug_temp)
 from .ws import router as ws_router
 from .inproc_scheduler import start_if_enabled
 
 # Fail fast if production is misconfigured (insecure secret, wildcard CORS, etc.)
 enforce_production_safety()
 
-# Optional error tracking - only active when SENTRY_DSN is provided.
+# Optional error tracking — only active when SENTRY_DSN is provided.
 if settings.SENTRY_DSN:
     try:
         import sentry_sdk
@@ -57,8 +57,7 @@ app.include_router(imports.router)
 app.include_router(sandbox.router)
 app.include_router(alerts.router)
 app.include_router(datamodel.router)
-app.include_router(admin.router)
-app.include_router(lead_times.router)
+app.include_router(debug_temp.router)
 app.include_router(ws_router)
 
 
