@@ -12,6 +12,7 @@ in a real deployment -- anyone who finds this URL could reseed your users.
 from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 
 from ..database import engine, get_db
 from .. import models
@@ -58,10 +59,13 @@ def debug_seed_users():
             if existing:
                 skipped.append(username)
                 continue
+            now = datetime.now(timezone.utc)
             db.add(models.AppUser(
                 username=username, role=role,
                 password_hash=hash_password(password),
                 is_active=True,
+                created_at=now,
+                password_changed_at=now,
             ))
             created.append(username)
         db.commit()
