@@ -16,7 +16,7 @@ from sqlalchemy import text
 from .config import settings, enforce_production_safety
 from .database import engine
 from .routers import (products, orders, bom, events, routings, dashboard, schedule, datamodel,
-                      auth, audit, materials, imports, sandbox, alerts, debug_temp)
+                      auth, audit, materials, imports, sandbox, alerts)
 from .ws import router as ws_router
 from .inproc_scheduler import start_if_enabled
 
@@ -57,7 +57,6 @@ app.include_router(imports.router)
 app.include_router(sandbox.router)
 app.include_router(alerts.router)
 app.include_router(datamodel.router)
-app.include_router(debug_temp.router)
 app.include_router(ws_router)
 
 
