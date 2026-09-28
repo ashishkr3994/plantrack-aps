@@ -102,8 +102,8 @@ def get_gantt_data(db: Session = Depends(get_db)):
     """)).mappings().all()
 
     downtime = db.execute(text("""
-        SELECT ae.event_timestamp, ae.downtime_mins, ae.downtime_reason,
-               o.order_id, oo.work_center
+        SELECT ae.event_id, ae.event_type, ae.event_timestamp, ae.downtime_mins, ae.downtime_reason,
+               ae.operation_seq, o.id AS order_pk, o.order_id, oo.work_center
         FROM actual_event ae
         LEFT JOIN order_header o ON o.id = ae.order_id
         LEFT JOIN order_operation oo ON oo.order_id = ae.order_id
@@ -113,8 +113,8 @@ def get_gantt_data(db: Session = Depends(get_db)):
                 WHERE ps2.order_id = ae.order_id AND ps2.is_current
                 LIMIT 1
             )
-        WHERE ae.event_type = 'pause' AND ae.downtime_mins > 0
-        ORDER BY ae.event_timestamp
+        WHERE ae.event_type IN ('pause', 'resume') AND ae.order_id IS NOT NULL
+        ORDER BY o.id, ae.event_timestamp
     """)).mappings().all()
 
     # Work-centre-wide scope is tagged '[WC]' on the reason (see events.py), but
@@ -124,18 +124,61 @@ def get_gantt_data(db: Session = Depends(get_db)):
     # real work centre via the join above for BOTH scopes, so both are shown:
     # an order-scoped pause still visibly marks the outage on that machine's
     # row, it's just labelled as affecting one order rather than the whole shop.
-    dt_out = []
+    #
+    # Duration: real elapsed time (resume_ts - pause_ts) once a matching resume
+    # is logged, the estimate only while still ongoing -- same rule the solver
+    # and deviation engine use (downtime_utils.pair_pause_resume), so the
+    # timeline never disagrees with what actually got scheduled/classified.
+    from collections import defaultdict as _dd
+    from ..engine.downtime_utils import pair_pause_resume
+    by_order = _dd(list)
     for d in downtime:
-        reason = d["downtime_reason"] or ""
-        whole_wc = reason.startswith("[WC]")
-        dt_out.append({
-            "work_center": d["work_center"],
-            "whole_wc": whole_wc,
-            "order_id": d["order_id"],
-            "start": d["event_timestamp"].isoformat(),
-            "duration_mins": d["downtime_mins"],
-            "reason": reason,
-        })
+        if d["order_pk"] is not None:
+            by_order[d["order_pk"]].append(d)
+
+    dt_out = []
+    for order_pk, evs in by_order.items():
+        for window in pair_pause_resume(evs):
+            if window.duration_mins <= 0:
+                continue
+            p = window.pause_event
+            reason = p["downtime_reason"] or ""
+            whole_wc = reason.startswith("[WC]")
+            dt_out.append({
+                "work_center": p["work_center"],
+                "whole_wc": whole_wc,
+                "order_id": p["order_id"],
+                "start": window.start_ts.isoformat(),
+                "duration_mins": round(window.duration_mins),
+                "reason": reason,
+                "ongoing": not window.resumed,
+            })
+
+    # Discrete event markers (start/resume/complete/scrap) so the timeline can
+    # show exactly when each was logged, layered alongside -- not instead of
+    # -- the operation block itself. Order-level events with no operation_seq
+    # (material_ready, dispatch, delivered) aren't tied to one machine row, so
+    # they're not included here.
+    marker_rows = db.execute(text("""
+        SELECT ae.event_type, ae.event_timestamp, ae.event_qty, o.order_id, oo.work_center
+        FROM actual_event ae
+        JOIN order_header o ON o.id = ae.order_id
+        LEFT JOIN order_operation oo ON oo.order_id = ae.order_id
+            AND oo.operation_seq = ae.operation_seq
+            AND oo.schedule_id = (
+                SELECT ps2.id FROM planned_schedule ps2
+                WHERE ps2.order_id = ae.order_id AND ps2.is_current
+                LIMIT 1
+            )
+        WHERE ae.event_type IN ('start', 'resume', 'complete', 'scrap')
+          AND ae.operation_seq IS NOT NULL AND oo.work_center IS NOT NULL
+        ORDER BY ae.event_timestamp
+    """)).mappings().all()
+    markers_out = [{
+        "work_center": m["work_center"], "order_id": m["order_id"],
+        "event_type": m["event_type"], "at": m["event_timestamp"].isoformat(),
+        "qty": m["event_qty"],
+    } for m in marker_rows]
 
     return {
         "operations": [{
@@ -155,6 +198,7 @@ def get_gantt_data(db: Session = Depends(get_db)):
             "busy_hrs": round(float(r["busy_hrs"]), 2) if r["busy_hrs"] is not None else None,
         } for r in ops],
         "downtime": dt_out,
+        "events": markers_out,
     }
 
 
