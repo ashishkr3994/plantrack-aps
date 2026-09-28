@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .calendar import WorkingCalendar
+from .downtime_utils import pair_pause_resume
 
 # Fixed downstream lead time (days) between production end and customer
 # delivery: pack + dispatch + transport. The solver targets production
@@ -251,33 +252,49 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             warm[(oo.order_id, oo.operation_seq)] = max(
                 0, cal.working_minutes_between(origin, start_dt))
 
-    # downtime blocks from logged pause events -> real solver constraints.
+    # downtime blocks from logged pause/resume events -> real solver constraints.
     # An operational pause (default) blocks only the affected order's operation;
     # a work-centre-wide pause (reason tagged '[WC]') blocks the whole machine
     # for that window so ALL orders on it are scheduled around the outage.
+    #
+    # Duration: if a resume has been logged, the REAL elapsed time
+    # (resume_ts - pause_ts) is used -- that's what actually happened. A
+    # pause with no resume yet falls back to its logged estimate (the best
+    # available answer while the outage is still ongoing). See
+    # downtime_utils.pair_pause_resume, shared with the deviation engine and
+    # the gantt timeline so all three agree on how long an outage lasted.
     downtime_blocks: list[tuple] = []
     order_route = {o.pk: o.route_id for o in orders}
+    events_by_order: dict[int, list] = {}
     for ev in db.query(models.ActualEvent).filter(
-            models.ActualEvent.event_type == "pause").all():
-        mins = int(ev.downtime_mins or 0)
-        if mins <= 0 or ev.order_id is None:
+            models.ActualEvent.event_type.in_(["pause", "resume"])).order_by(
+            models.ActualEvent.event_timestamp).all():
+        if ev.order_id is None:
             continue
-        ev_ts = ev.event_timestamp
-        if ev_ts.tzinfo is None:
-            ev_ts = ev_ts.replace(tzinfo=timezone.utc)
-        start_min = max(0, cal.working_minutes_between(origin, ev_ts))
-        end_min = start_min + mins
-        # which work centre? the affected operation's work centre on the route.
-        rid = order_route.get(ev.order_id)
-        wc = None
-        if rid and ev.operation_seq is not None:
-            for op in routes.get(rid, []):
-                if op.seq == ev.operation_seq:
-                    wc = op.work_center
-                    break
-        wc_wide = bool(ev.downtime_reason and ev.downtime_reason.startswith("[WC]"))
-        downtime_blocks.append((wc, start_min, end_min,
-                                None if wc_wide else ev.order_id))
+        events_by_order.setdefault(ev.order_id, []).append(ev)
+
+    for order_pk, evs in events_by_order.items():
+        for window in pair_pause_resume(evs):
+            mins = window.duration_mins
+            if mins <= 0:
+                continue
+            pause_ev = window.pause_event
+            start_ts = window.start_ts
+            if start_ts.tzinfo is None:
+                start_ts = start_ts.replace(tzinfo=timezone.utc)
+            start_min = max(0, cal.working_minutes_between(origin, start_ts))
+            end_min = start_min + int(round(mins))
+            # which work centre? the affected operation's work centre on the route.
+            rid = order_route.get(order_pk)
+            wc = None
+            if rid and pause_ev.operation_seq is not None:
+                for op in routes.get(rid, []):
+                    if op.seq == pause_ev.operation_seq:
+                        wc = op.work_center
+                        break
+            wc_wide = bool(pause_ev.downtime_reason and pause_ev.downtime_reason.startswith("[WC]"))
+            downtime_blocks.append((wc, start_min, end_min,
+                                    None if wc_wide else order_pk))
 
     return SchedulingInput(origin=origin, calendar=cal, orders=orders,
                            work_center_capacity=wc_caps,
