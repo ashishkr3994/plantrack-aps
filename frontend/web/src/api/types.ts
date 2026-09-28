@@ -437,11 +437,21 @@ export interface GanttDowntime {
   start: string;
   duration_mins: number;
   reason: string;
+  ongoing: boolean;
+}
+
+export interface GanttEventMarker {
+  work_center: string;
+  order_id: string;
+  event_type: "start" | "resume" | "complete" | "scrap";
+  at: string;
+  qty: number | null;
 }
 
 export interface GanttData {
   operations: GanttOp[];
   downtime: GanttDowntime[];
+  events: GanttEventMarker[];
 }
 
 export interface HeatmapCell { date: string; load_pct: number | null; overloaded: boolean; }
