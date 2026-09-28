@@ -24,6 +24,7 @@ export function Timeline() {
   // affects every order on that machine, not just the one that logged it, so
   // filtering it out by order would misrepresent the outage's real scope.
   const downtime = gantt.data?.downtime ?? [];
+  const events = gantt.data?.events ?? [];
 
   const unplacedDowntimeCount = downtime.filter((d) => !d.work_center).length;
 
@@ -66,7 +67,7 @@ export function Timeline() {
           )}
           {filteredOps.length > 0 && (
             <div style={{ padding: 12 }}>
-              <GanttChart operations={filteredOps} downtime={downtime} />
+              <GanttChart operations={filteredOps} downtime={downtime} events={events} />
             </div>
           )}
         </div>
