@@ -481,6 +481,7 @@ export interface CapacityCell {
     order_id: string; customer: string; priority: string;
     operation_seq: number; work_center: string; duration_mins: number;
     planned_start: string; planned_end: string;
+    minutes_today: number | null; spans_other_days: boolean;
   }>;
 }
 
