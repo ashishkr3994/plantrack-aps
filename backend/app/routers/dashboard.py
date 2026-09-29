@@ -1,3 +1,4 @@
+
 """Read-only dashboard endpoints backed by the schema's convenience views."""
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -267,7 +268,23 @@ def order_detail(order_id: str, db: Session = Depends(get_db)):
 @router.get("/capacity-cell")
 def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db)):
     """Which orders/operations load a given work-centre on a given day - the
-    drill-down behind a heatmap cell. Shows what's breaching capacity there."""
+    drill-down behind a heatmap cell. Shows what's breaching capacity there.
+
+    minutes_today is each operation's ACTUAL portion of THIS ONE day, not its
+    full total duration -- an operation spanning several days (e.g. a long QC
+    inspection running from Tuesday evening into Wednesday) genuinely only
+    occupies PART of Tuesday and PART of Wednesday. Showing its full duration
+    on every day it touches would make the numbers here look like they don't
+    add up to the aggregate load shown for the cell (e.g. two operations at
+    570 and 566 minutes each, on a day whose total load is correctly 600/600
+    -- each is only contributing part of its own length to this specific
+    day, not all of it). Uses the exact same per-day overlap calculation as
+    the aggregate (engine/capacity.py's operation_minutes_on_day), so these
+    numbers always sum to exactly the aggregate shown for this cell.
+    """
+    from datetime import datetime as _dt, date as _date
+    from ..engine.capacity import load_shift_config, operation_minutes_on_day
+
     res = db.execute(text("""
         SELECT o.order_id, o.customer, o.priority,
                oo.operation_seq, oo.work_center, oo.duration_mins,
@@ -279,11 +296,24 @@ def capacity_cell(work_center: str, load_date: str, db: Session = Depends(get_db
           AND oo.planned_end::date   >= CAST(:d AS date)
         ORDER BY oo.planned_start
     """), {"wc": work_center, "d": load_date})
-    cols = res.keys()
-    operations = [
-        {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in dict(zip(cols, r)).items()}
-        for r in res.fetchall()
-    ]
+    cols = list(res.keys())
+    raw_rows = [dict(zip(cols, r)) for r in res.fetchall()]
+
+    _, shift_windows, _ = load_shift_config(db)
+    day = _dt.strptime(load_date, "%Y-%m-%d").date() if isinstance(load_date, str) else load_date
+
+    operations = []
+    for row in raw_rows:
+        p_start, p_end = row["planned_start"], row["planned_end"]
+        minutes_today = round(operation_minutes_on_day(p_start, p_end, day, shift_windows)) \
+            if p_start and p_end else None
+        spans_other_days = bool(p_start and p_end and (p_start.date() != day or p_end.date() != day))
+        operations.append({
+            **{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()},
+            "minutes_today": minutes_today,
+            "spans_other_days": spans_other_days,
+        })
+
     load = db.execute(text(
         "SELECT available_min, demand_min, round(load_pct,0) AS load_pct, overloaded "
         "FROM capacity_load WHERE work_center=:wc AND load_date=:d"),
