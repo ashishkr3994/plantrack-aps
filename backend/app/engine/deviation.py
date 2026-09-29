@@ -31,6 +31,7 @@ from sqlalchemy import text
 
 from .. import models
 from ..events_bus import publish
+from .downtime_utils import pair_pause_resume, earliest_effective_start
 
 
 @dataclass
@@ -111,30 +112,42 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     slip_mins = 0.0
     silent_mins = 0.0  # tracked separately -- see thresholds dict for why
 
-    start_evs = [e for e in events if e.event_type == "start"]
-    has_started = len(start_evs) > 0
+    effective_start = earliest_effective_start(events)  # (event, ts) or None, start OR resume
+    has_started = effective_start is not None
     has_completed = any(e.event_type in ("complete", "dispatch", "delivered") for e in events)
 
-    # 1. late start
-    if start_evs:
-        actual_start = _aware(start_evs[-1].event_timestamp)
+    # 1. late start -- an explicit start event, OR a resume standing in for
+    # one when no start was ever logged. Resuming implies production is now
+    # actually running even if a distinct "start" was never separately
+    # logged (e.g. an order sat idle before anyone got to it, and the first
+    # thing recorded is a resume once work actually began).
+    if effective_start:
+        start_ev, start_ts = effective_start
+        actual_start = _aware(start_ts)
         start_slip = (actual_start - planned_start).total_seconds() / 60
         if start_slip > 0:
             slip_mins += start_slip
-            reasons.append(Reason("time", f"Late start +{round(start_slip)}m"))
+            label = "Late start" if start_ev.event_type == "start" else "Late start (via resume)"
+            reasons.append(Reason("time", f"{label} +{round(start_slip)}m"))
 
-    # 2. silent start miss
+    # 2. silent start miss -- unchanged in spirit: only fires when NEITHER a
+    # start NOR a resume has ever been logged for this order.
     if not has_started and not has_completed and now > planned_start:
         silent = (now - planned_start).total_seconds() / 60
         slip_mins += silent
         silent_mins += silent
         reasons.append(Reason("time", f"Silent start miss +{round(silent/60, 1)}h"))
 
-    # 3. downtime
-    downtime = sum(int(e.downtime_mins or 0) for e in events if e.event_type == "pause")
+    # 3. downtime -- real elapsed time (resume_ts - pause_ts) once a matching
+    # resume has been logged; the planner's original estimate only while a
+    # pause is still ongoing (see downtime_utils.pair_pause_resume).
+    downtime_windows = pair_pause_resume(events)
+    downtime = sum(w.duration_mins for w in downtime_windows)
     if downtime > 0:
         slip_mins += downtime
-        reasons.append(Reason("time", f"Downtime {downtime}m"))
+        still_open = any(not w.resumed for w in downtime_windows)
+        suffix = " (ongoing)" if still_open else ""
+        reasons.append(Reason("time", f"Downtime {round(downtime)}m{suffix}"))
 
     # 4. scrap rework
     scrap_qty = sum(int(e.event_qty or 0) for e in events if e.event_type == "scrap")
@@ -158,7 +171,7 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     complete_evs = [e for e in events if e.event_type == "complete" and e.event_qty]
     if has_started and not has_completed and complete_evs:
         completed_qty = sum(int(e.event_qty or 0) for e in complete_evs)
-        first_start = _aware(start_evs[0].event_timestamp)
+        first_start = _aware(effective_start[1]) if effective_start else now
         elapsed_min = (now - first_start).total_seconds() / 60
         actual_rate = completed_qty / elapsed_min if elapsed_min > 0 else 0
         remaining_qty = int(order.order_qty) - completed_qty - scrap_qty
