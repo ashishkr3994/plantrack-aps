@@ -157,7 +157,7 @@ function CellDrillDown({ wc, date, onClose }: { wc: string; date: string; onClos
             <Empty message="No operations found for this cell." />
           ) : (
             <table>
-              <thead><tr><th>Order</th><th>Customer</th><th>Priority</th><th className="num">Op</th><th className="num">Mins</th><th>Window</th></tr></thead>
+              <thead><tr><th>Order</th><th>Customer</th><th>Priority</th><th className="num">Op</th><th className="num">Mins on this day</th><th>Window</th></tr></thead>
               <tbody>
                 {d.operations.map((op, i) => (
                   <tr key={i}>
@@ -165,7 +165,14 @@ function CellDrillDown({ wc, date, onClose }: { wc: string; date: string; onClos
                     <td>{op.customer}</td>
                     <td><Pill tone={op.priority === "HIGH" ? "risk" : op.priority === "MED" ? "warn" : "muted"}>{op.priority}</Pill></td>
                     <td className="num">{op.operation_seq}</td>
-                    <td className="num">{Math.round(op.duration_mins)}</td>
+                    <td className="num">
+                      {op.minutes_today != null ? Math.round(op.minutes_today) : Math.round(op.duration_mins)}
+                      {op.spans_other_days && (
+                        <span className="muted" style={{ fontSize: 11, display: "block" }}>
+                          of {Math.round(op.duration_mins)} total (spans other days)
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: 12 }}>{fmtDT(op.planned_start)}  {fmtDT(op.planned_end)}</td>
                   </tr>
                 ))}
