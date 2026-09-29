@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Modal, PriorityPill } from "@/components/ui";
 import { fmtDateTime, fmtHours } from "@/lib/format";
-import type { GanttOp, GanttDowntime } from "@/api/types";
+import type { GanttOp, GanttDowntime, GanttEventMarker } from "@/api/types";
 
 // Zoom presets: pixels-per-hour. "Comfortable" is the default -- wide enough
 // to read order IDs on typical operations without excessive horizontal scroll.
@@ -21,7 +21,7 @@ export interface GanttRange { start: Date; end: Date; }
 /** Compute a shared time range across one or more operation/downtime sets, so
  * multiple GanttChart instances (e.g. live vs what-if side by side) can be
  * aligned on the same X axis for a genuine visual comparison. */
-export function computeSharedRange(sets: { operations: GanttOp[]; downtime: GanttDowntime[] }[]): GanttRange | null {
+export function computeSharedRange(sets: { operations: GanttOp[]; downtime: GanttDowntime[]; events?: GanttEventMarker[] }[]): GanttRange | null {
   const starts: number[] = [];
   const ends: number[] = [];
   for (const s of sets) {
@@ -30,13 +30,17 @@ export function computeSharedRange(sets: { operations: GanttOp[]; downtime: Gant
       const t = new Date(d.start).getTime();
       if (!isNaN(t)) { starts.push(t); ends.push(t + d.duration_mins * 60_000); }
     }
+    for (const m of s.events ?? []) {
+      const t = new Date(m.at).getTime();
+      if (!isNaN(t)) { starts.push(t); ends.push(t); }
+    }
   }
   if (starts.length === 0) return null;
   return { start: startOfDay(new Date(Math.min(...starts))), end: new Date(Math.max(...ends) + DAY_MS * 0.5) };
 }
 
-export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: {
-  operations: GanttOp[]; downtime: GanttDowntime[];
+export function GanttChart({ operations, downtime, events, range, zoom, onZoomChange }: {
+  operations: GanttOp[]; downtime: GanttDowntime[]; events?: GanttEventMarker[];
   range?: GanttRange | null;         // shared range override, for aligned comparisons
   zoom?: ZoomKey; onZoomChange?: (z: ZoomKey) => void;
 }) {
@@ -46,14 +50,16 @@ export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: 
   const [selected, setSelected] = useState<GanttOp | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pxPerHour = ZOOM[activeZoom];
+  const evs = events ?? [];
 
-  const { workCenters, opsByWc, downtimeByWc, rangeStart, totalWidth, dayTicks, nowLeft } = useMemo(() => {
+  const { workCenters, opsByWc, downtimeByWc, markersByWc, rangeStart, totalWidth, dayTicks, nowLeft } = useMemo(() => {
     if (operations.length === 0) {
       return { workCenters: [] as string[], opsByWc: new Map<string, GanttOp[]>(),
-        downtimeByWc: new Map<string, GanttDowntime[]>(), rangeStart: new Date(),
+        downtimeByWc: new Map<string, GanttDowntime[]>(), markersByWc: new Map<string, GanttEventMarker[]>(),
+        rangeStart: new Date(),
         totalWidth: 0, dayTicks: [] as { left: number; label: string }[], nowLeft: null as number | null };
     }
-    const computed = computeSharedRange([{ operations, downtime }]);
+    const computed = computeSharedRange([{ operations, downtime, events: evs }]);
     const rangeStart = range?.start ?? computed?.start ?? startOfDay(new Date());
     const rangeEndPadded = range?.end ?? computed?.end ?? new Date();
 
@@ -75,6 +81,13 @@ export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: 
       downtimeByWc.set(d.work_center, list);
     }
 
+    const markersByWc = new Map<string, GanttEventMarker[]>();
+    for (const m of evs) {
+      const list = markersByWc.get(m.work_center) ?? [];
+      list.push(m);
+      markersByWc.set(m.work_center, list);
+    }
+
     const dayTicks: { left: number; label: string }[] = [];
     for (let t = rangeStart.getTime(); t < rangeEndPadded.getTime(); t += DAY_MS) {
       const left = ((t - rangeStart.getTime()) / 3_600_000) * pxPerHour;
@@ -89,8 +102,8 @@ export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: 
       ? ((now - rangeStart.getTime()) / 3_600_000) * pxPerHour
       : null;
 
-    return { workCenters, opsByWc, downtimeByWc, rangeStart, totalWidth, dayTicks, nowLeft };
-  }, [operations, downtime, pxPerHour, range]);
+    return { workCenters, opsByWc, downtimeByWc, markersByWc, rangeStart, totalWidth, dayTicks, nowLeft };
+  }, [operations, downtime, evs, pxPerHour, range]);
 
   const xFor = (iso: string) => ((new Date(iso).getTime() - rangeStart.getTime()) / 3_600_000) * pxPerHour;
 
@@ -139,9 +152,21 @@ export function GanttChart({ operations, downtime, range, zoom, onZoomChange }: 
                     const width = Math.max(6, (d.duration_mins / 60) * pxPerHour);
                     const cleanReason = d.reason.replace(/^\[.*?\]\s*/, "") || "logged pause";
                     const scope = d.whole_wc ? "whole machine down" : `${d.order_id ?? "this order"} only`;
+                    const status = d.ongoing ? "still down, not yet resumed" : "resumed";
                     return (
-                      <div key={`dt-${i}`} className="gantt-downtime" style={{ left, width }}
-                        title={`Downtime (${scope}): ${cleanReason}`} />
+                      <div key={`dt-${i}`} className={`gantt-downtime${d.ongoing ? " ongoing" : ""}`}
+                        style={{ left, width }}
+                        title={`Downtime (${scope}): ${cleanReason} - ${status}`} />
+                    );
+                  })}
+                  {(markersByWc.get(wc) ?? []).map((m, i) => {
+                    const left = xFor(m.at);
+                    const label = m.event_type[0].toUpperCase() + m.event_type.slice(1);
+                    const qtyPart = m.qty != null ? ` (qty ${m.qty})` : "";
+                    return (
+                      <div key={`mk-${i}`} className={`gantt-marker gantt-marker-${m.event_type}`}
+                        style={{ left }}
+                        title={`${label} - ${m.order_id}${qtyPart}`} />
                     );
                   })}
                   {(opsByWc.get(wc) ?? []).map((op, i) => {
