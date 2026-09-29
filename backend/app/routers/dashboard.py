@@ -1,4 +1,3 @@
-
 """Read-only dashboard endpoints backed by the schema's convenience views."""
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
