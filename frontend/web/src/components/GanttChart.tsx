@@ -48,6 +48,7 @@ export function GanttChart({ operations, downtime, events, range, zoom, onZoomCh
   const activeZoom = zoom ?? localZoom;
   const setZoom = onZoomChange ?? setLocalZoom;
   const [selected, setSelected] = useState<GanttOp | null>(null);
+  const [hoverTip, setHoverTip] = useState<{ x: number; y: number; lines: string[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pxPerHour = ZOOM[activeZoom];
   const evs = events ?? [];
@@ -151,22 +152,34 @@ export function GanttChart({ operations, downtime, events, range, zoom, onZoomCh
                     const left = xFor(d.start);
                     const width = Math.max(6, (d.duration_mins / 60) * pxPerHour);
                     const cleanReason = d.reason.replace(/^\[.*?\]\s*/, "") || "logged pause";
-                    const scope = d.whole_wc ? "whole machine down" : `${d.order_id ?? "this order"} only`;
-                    const status = d.ongoing ? "still down, not yet resumed" : "resumed";
+                    const scope = d.whole_wc
+                      ? "Impacts ALL orders on this machine"
+                      : `Specific to ${d.order_id ?? "this order"} only`;
+                    const status = d.ongoing ? "Still down - no resume logged yet" : "Resumed";
+                    const lines = [
+                      `Downtime - ${cleanReason}`,
+                      scope,
+                      `${status} - ${Math.round(d.duration_mins)} min`,
+                    ];
                     return (
                       <div key={`dt-${i}`} className={`gantt-downtime${d.ongoing ? " ongoing" : ""}`}
                         style={{ left, width }}
-                        title={`Downtime (${scope}): ${cleanReason} - ${status}`} />
+                        onMouseEnter={(e) => setHoverTip({ x: e.clientX, y: e.clientY, lines })}
+                        onMouseMove={(e) => setHoverTip({ x: e.clientX, y: e.clientY, lines })}
+                        onMouseLeave={() => setHoverTip(null)} />
                     );
                   })}
                   {(markersByWc.get(wc) ?? []).map((m, i) => {
                     const left = xFor(m.at);
                     const label = m.event_type[0].toUpperCase() + m.event_type.slice(1);
-                    const qtyPart = m.qty != null ? ` (qty ${m.qty})` : "";
+                    const qtyPart = m.qty != null ? `, qty ${m.qty}` : "";
+                    const lines = [`${label} - ${m.order_id}${qtyPart}`, fmtDateTime(m.at)];
                     return (
                       <div key={`mk-${i}`} className={`gantt-marker gantt-marker-${m.event_type}`}
                         style={{ left }}
-                        title={`${label} - ${m.order_id}${qtyPart}`} />
+                        onMouseEnter={(e) => setHoverTip({ x: e.clientX, y: e.clientY, lines })}
+                        onMouseMove={(e) => setHoverTip({ x: e.clientX, y: e.clientY, lines })}
+                        onMouseLeave={() => setHoverTip(null)} />
                     );
                   })}
                   {(opsByWc.get(wc) ?? []).map((op, i) => {
@@ -186,6 +199,14 @@ export function GanttChart({ operations, downtime, events, range, zoom, onZoomCh
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {hoverTip && (
+        <div className="gantt-hover-tip" style={{ left: hoverTip.x + 14, top: hoverTip.y + 14 }}>
+          {hoverTip.lines.map((line, i) => (
+            <div key={i} className={i === 0 ? "gantt-hover-tip-title" : ""}>{line}</div>
+          ))}
         </div>
       )}
 
@@ -220,3 +241,5 @@ export function GanttChart({ operations, downtime, events, range, zoom, onZoomCh
     </div>
   );
 }
+
+
