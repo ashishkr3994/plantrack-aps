@@ -1,3 +1,4 @@
+
 /* PlanTrack design tokens + base styles.
    Operational control-tower aesthetic: dense, scannable, calm.
    Teal identity carried from the prototype, executed with a disciplined
@@ -495,3 +496,19 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
 .gantt-marker-resume   { background: #0f9d58; }
 .gantt-marker-complete { background: #1b7a4d; }
 .gantt-marker-scrap    { background: #c0392b; }
+
+/* Floating hover tooltip for downtime stripes and event markers -- replaces
+   the native browser title attribute, which is slow to appear and easy to
+   miss on small targets like a thin downtime stripe or a tiny marker
+   diamond. Positioned in fixed coordinates near the cursor (set from
+   clientX/clientY in the component), so it always appears immediately,
+   fully visible, regardless of the hovered element's size. */
+.gantt-hover-tip {
+  position: fixed; z-index: 50; pointer-events: none;
+  background: #1b2733; color: #fff; border-radius: 6px;
+  padding: 7px 10px; font-size: 11.5px; line-height: 1.5;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  max-width: 260px;
+}
+.gantt-hover-tip-title { font-weight: 650; margin-bottom: 1px; }
+[data-theme="dark"] .gantt-hover-tip { background: #0c1418; border: 1px solid #2a3a42; }
