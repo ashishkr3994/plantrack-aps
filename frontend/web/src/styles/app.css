@@ -426,11 +426,11 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
 }
 
 .gantt-block {
-  position: absolute; top: 6px; bottom: 6px; border-radius: 6px;
+  position: absolute; top: 6px; bottom: 10px; border-radius: 6px;
   border: none; cursor: pointer; padding: 0 6px; text-align: left;
   box-shadow: 0 1px 2px rgba(0,0,0,0.12);
   transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
-  z-index: 1; /* below .gantt-downtime (5) so a mid-operation outage always shows */
+  z-index: 1;
 }
 /* Hover feedback: deepen the block's own colour (darker shade in light mode,
    lighter in dark mode, via filter so it never fights the background overrides
@@ -440,7 +440,7 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
   filter: brightness(0.86);
   transform: translateY(-2px);
   box-shadow: 0 6px 14px rgba(0,0,0,0.28);
-  z-index: 2; /* lifts above sibling blocks while hovered, still below downtime (5) */
+  z-index: 6; /* lift above the downtime stripe and markers while hovered */
 }
 [data-theme="dark"] .gantt-block:hover { filter: brightness(1.22); }
 .gantt-block:hover .gantt-block-label { font-weight: 800; }
@@ -463,15 +463,35 @@ th.sortable .sort-caret { opacity: 0.5; font-size: 10px; margin-left: 3px; }
   transition: font-weight 0.12s ease;
 }
 
+/* A thin stripe along the BOTTOM of the row, not a full-height block --
+   the operation above it (top: 6px, bottom: 10px) stays fully visible,
+   label included, even during a logged outage. Previously this was a
+   full-height, opaque block at a higher z-index specifically so it would
+   never be hidden -- which solved that problem by creating the opposite
+   one: it hid the operation instead. A thin, still-clearly-visible stripe
+   fixes both at once. */
 .gantt-downtime {
-  position: absolute; top: 2px; bottom: 2px; border-radius: 4px;
+  position: absolute; bottom: 2px; height: 7px; border-radius: 3px;
   background: repeating-linear-gradient(45deg, #f6b8b0, #f6b8b0 3px, #fbeceb 3px, #fbeceb 6px);
-  border: 1px solid #e8a79c; z-index: 5;
-  /* Downtime overlaps operations that fall inside the outage window on the
-     same machine row. Both are absolutely positioned, and z-index:auto on the
-     operation block sits at the same stacking level as z-index:0 -- so without
-     an explicit HIGHER z-index here, the operation's solid colour paints over
-     and completely hides the downtime bar, even though the data is correct.
-     A logged outage is the more urgent thing to see, so it must always render
-     on top, regardless of DOM order. */
+  border: 1px solid #e8a79c; z-index: 3;
 }
+.gantt-downtime.ongoing {
+  /* a pause with no resume logged yet -- still actively down right now */
+  animation: gantt-downtime-pulse 1.6s ease-in-out infinite;
+}
+@keyframes gantt-downtime-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* Discrete event markers (start/resume/complete/scrap): a small diamond at
+   the exact timestamp, sitting at the TOP of the row above the operation
+   block, so it never competes with the downtime stripe at the bottom or
+   the operation's own label. */
+.gantt-marker {
+  position: absolute; top: 2px; width: 9px; height: 9px;
+  transform: translateX(-50%) rotate(45deg);
+  border: 1.5px solid #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  z-index: 4; cursor: default;
+}
+.gantt-marker-start    { background: #2a78d6; }
+.gantt-marker-resume   { background: #0f9d58; }
+.gantt-marker-complete { background: #1b7a4d; }
+.gantt-marker-scrap    { background: #c0392b; }
