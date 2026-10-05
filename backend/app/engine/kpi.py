@@ -79,8 +79,16 @@ def compute_kpis(db: Session, now: datetime | None = None) -> dict:
     # adherence immediately even while it's still too weak a signal to land
     # an order in "at risk" -- see compute_order_status's adherent field.
     # This means adherent_count + at_risk no longer necessarily sums to
-    # total; that's intentional, not a bug.
-    adherence_pct = round(100.0 * cls["adherent_count"] / total) if total else None
+    # scheduled; that's intentional, not a bug.
+    #
+    # Denominator is SCHEDULED orders, not all orders. compute_order_status
+    # returns None (skipped, never counted toward adherent_count) for an
+    # order with no current schedule, so using "total" let an order that
+    # simply hasn't been solved yet silently drag the percentage down, even
+    # though nothing about it is actually behaving badly. Verified directly:
+    # adding one unscheduled order with no other changes dropped this from
+    # 50% to 47%.
+    adherence_pct = round(100.0 * cls["adherent_count"] / scheduled) if scheduled else None
 
     # on-time delivery = committed >= planned_delivery / total
     otd_count = db.execute(text("""
@@ -136,12 +144,29 @@ def drilldown(db: Session, key: str, now: datetime | None = None) -> dict:
     def rows_for(orders):
         return [_order_row(o, details[o.id]) for o in orders if o.id in details]
 
-    if key in ("adherence", "risk"):
-        title = ("Schedule adherence - at-risk & off-plan orders"
-                 if key == "adherence" else "Orders at risk")
-        sub = "Orders not on track, with risk reasons"
+    if key == "adherence":
+        # Adherence and "orders at risk" are DELIBERATELY different, more/less
+        # sensitive measures (see classify_orders) -- this drilldown used to
+        # share the "risk" status bucket's query, which meant an order could
+        # show up here (and disappear once "fixed") purely because of a
+        # material-status change, even when its actual slip was 0 and it was
+        # adherent=True the entire time. Verified directly: ORD-1011, flagged
+        # "material late 10.3d" with no other issue, had adherent=True and
+        # slip_hrs=0 -- it was never actually hurting this KPI, only ever
+        # appearing here due to this bug. Now shows orders where
+        # adherent is False, matching what the percentage is actually
+        # computed from.
+        non_adherent = [o for o in cls["orders"]
+                       if o.id in details and not details[o.id].adherent]
+        return {"title": "Schedule adherence - off-plan orders",
+                "subtitle": "Orders whose full slip (including silent gaps) exceeds the adherence threshold, or whose delivery date is breached",
+                "rows": rows_for(non_adherent)}
+
+    if key == "risk":
         orders = b["risk"] + b["delay"] + b["crit"]
-        return {"title": title, "subtitle": sub, "rows": rows_for(orders)}
+        return {"title": "Orders at risk",
+                "subtitle": "Orders not on track, with risk reasons",
+                "rows": rows_for(orders)}
 
     if key == "delayed":
         return {"title": "Delayed & critical orders",
