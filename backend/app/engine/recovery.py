@@ -67,16 +67,87 @@ def _bottleneck_neighbors(db: Session, order_id: str, max_neighbors: int = 6) ->
         "SELECT DISTINCT work_center FROM capacity_load WHERE overloaded")).fetchall()}
     focus = [w for w in wcs if w in overloaded] or wcs
 
+    # Neighbors used to be picked alphabetically by order_id, capped at
+    # max_neighbors -- which meant that with more than max_neighbors orders
+    # sharing a bottleneck, some were silently excluded from the recovery's
+    # view of the machine with NO regard for whether their schedule actually
+    # overlaps where the target needs to land. A recovery is only safe
+    # against contention it can see; one excluded purely by alphabetical
+    # order_id could genuinely collide with the target's new schedule.
+    # Fixed to prioritize whichever neighbors are CLOSEST IN TIME to the
+    # target's own current window on these work centres -- the ones most
+    # likely to actually matter for a correct recovery -- rather than an
+    # arbitrary alphabetical cutoff.
+    target_window = db.execute(text("""
+        SELECT MIN(oo.planned_start) AS win_start, MAX(oo.planned_end) AS win_end
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        JOIN planned_schedule ps ON ps.order_id = o.id AND ps.is_current
+        WHERE o.order_id = :oid AND oo.work_center = ANY(:wcs)
+    """), {"oid": order_id, "wcs": focus}).mappings().first()
+    win_start = target_window["win_start"] if target_window else None
+    win_end = target_window["win_end"] if target_window else None
+
     rows = db.execute(text("""
-        SELECT DISTINCT o.order_id
+        SELECT o.order_id,
+               MIN(ABS(EXTRACT(EPOCH FROM (oo.planned_start - CAST(:win_start AS timestamptz))))) AS dist_start,
+               MIN(ABS(EXTRACT(EPOCH FROM (oo.planned_end - CAST(:win_end AS timestamptz))))) AS dist_end
         FROM order_operation oo
         JOIN order_header o ON o.id = oo.order_id
         JOIN planned_schedule ps ON ps.order_id = o.id AND ps.is_current
         WHERE oo.work_center = ANY(:wcs) AND o.order_id <> :oid
-        ORDER BY o.order_id
+        GROUP BY o.order_id
+        ORDER BY LEAST(MIN(ABS(EXTRACT(EPOCH FROM (oo.planned_start - CAST(:win_start AS timestamptz))))),
+                       MIN(ABS(EXTRACT(EPOCH FROM (oo.planned_end - CAST(:win_end AS timestamptz))))))
         LIMIT :lim
-    """), {"wcs": focus, "oid": order_id, "lim": max_neighbors}).fetchall()
+    """), {"wcs": focus, "oid": order_id, "win_start": win_start, "win_end": win_end,
+           "lim": max_neighbors}).fetchall()
     return [r[0] for r in rows]
+
+
+def _find_conflict(db: Session, si, result, order_id: str, order_pk: int) -> dict | None:
+    """Check the target's NEW operation windows (from this solve, about to be
+    persisted) against every OTHER order's actual, currently-persisted
+    schedule on the same work centres. Returns the first genuine overlap
+    found, or None. This is independent of neighbor selection -- it
+    validates the real result, not the heuristic that produced it."""
+    target_ops = [op for op in result.operations if op.order_pk == order_pk]
+    if not target_ops:
+        return None
+    wcs = list({op.work_center for op in target_ops})
+
+    existing = db.execute(text("""
+        SELECT o.order_id, oo.work_center, oo.planned_start, oo.planned_end
+        FROM order_operation oo
+        JOIN order_header o ON o.id = oo.order_id
+        JOIN planned_schedule ps ON ps.id = oo.schedule_id AND ps.is_current
+        WHERE oo.work_center = ANY(:wcs) AND o.id <> :pk
+    """), {"wcs": wcs, "pk": order_pk}).mappings().all()
+    if not existing:
+        return None
+
+    for op in target_ops:
+        new_start = si.calendar.to_datetime(op.start_min)
+        new_end = si.calendar.to_datetime(op.end_min)
+        if new_start.tzinfo is None:
+            new_start = new_start.replace(tzinfo=timezone.utc)
+        if new_end.tzinfo is None:
+            new_end = new_end.replace(tzinfo=timezone.utc)
+        for row in existing:
+            if row["work_center"] != op.work_center:
+                continue
+            other_start, other_end = row["planned_start"], row["planned_end"]
+            if other_start.tzinfo is None:
+                other_start = other_start.replace(tzinfo=timezone.utc)
+            if other_end.tzinfo is None:
+                other_end = other_end.replace(tzinfo=timezone.utc)
+            if new_start < other_end and new_end > other_start:
+                return {
+                    "work_center": op.work_center,
+                    "other_order_id": row["order_id"],
+                    "other_window": f"{other_start.isoformat()} -> {other_end.isoformat()}",
+                }
+    return None
 
 
 def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
@@ -109,16 +180,54 @@ def recover_order(db: Session, order_id: str, opts: RecoveryOptions,
         # contention-aware scope: solve the target together with the orders that
         # share its bottleneck work centre(s), so the recovery accounts for real
         # shop contention instead of assuming the target has the machines to
-        # itself. Neighbours are included for realism only; we persist just the
-        # target (below) so their committed schedules are left intact.
+        # itself. Neighbours are PINNED to their current, persisted positions
+        # (pin_existing_for) rather than left freely solvable: only the
+        # target gets persisted afterward, so a neighbor the solver was free
+        # to reposition internally -- but whose new position was never
+        # actually saved -- would make the target's result valid only in a
+        # world that doesn't exist once written to the database. Pinning
+        # neighbors makes the solve itself respect the real, final
+        # constraint the target must satisfy, instead of discovering a
+        # mismatch only after the fact.
         neighbors = _bottleneck_neighbors(db, order_id)
         scope = [order_id] + neighbors
-        si = load_scheduling_input(
-            db, minutes_per_day=minutes_per_day, order_ids=scope)
-        result = solve(si, max_seconds=opts.time_budget_s)
-        if not result.feasible:
-            return {"feasible": False, "status": result.status,
-                    "message": "No feasible recovery found with these options."}
+        neighbor_pks = {
+            r[0] for r in db.execute(text(
+                "SELECT id FROM order_header WHERE order_id = ANY(:ids)"),
+                {"ids": neighbors}).fetchall()
+        } if neighbors else set()
+
+        # Retry with the conflicting order added to scope (also pinned) if
+        # one is somehow still found -- a backstop for an order outside the
+        # neighbor set entirely, not the primary mechanism anymore now that
+        # neighbors are pinned.
+        max_attempts = 3
+        conflict = None
+        for attempt in range(max_attempts):
+            si = load_scheduling_input(
+                db, minutes_per_day=minutes_per_day, order_ids=scope,
+                pin_existing_for=neighbor_pks)
+            result = solve(si, max_seconds=opts.time_budget_s)
+            if not result.feasible:
+                return {"feasible": False, "status": result.status,
+                        "message": "No feasible recovery found with these options."}
+            conflict = _find_conflict(db, si, result, order_id, order.id)
+            if not conflict:
+                break
+            if conflict["other_order_id"] in scope:
+                break
+            new_rows = db.execute(text(
+                "SELECT id FROM order_header WHERE order_id = :oid"),
+                {"oid": conflict["other_order_id"]}).fetchall()
+            neighbor_pks |= {r[0] for r in new_rows}
+            scope = scope + [conflict["other_order_id"]]
+        if conflict:
+            return {"feasible": False, "status": "conflict",
+                    "message": (f"Recovery would double-book {conflict['work_center']} "
+                               f"with {conflict['other_order_id']} ({conflict['other_window']}) "
+                               "even after accounting for it directly -- not applied. "
+                               "Try a smaller overtime amount, a different quantity split, "
+                               "or a full shop re-solve.")}
         if dry_run:
             # preview only: don't persist a new schedule version, don't log.
             sched_order = next((o for o in result.orders if o.order_id == order_id), None)
