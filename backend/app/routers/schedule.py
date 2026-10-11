@@ -2,7 +2,7 @@
 and read the resulting schedule.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -85,8 +85,8 @@ def get_gantt_data(db: Session = Depends(get_db)):
     Also returns logged downtime windows so outages render alongside real work.
     """
     ops = db.execute(text("""
-        SELECT oo.work_center, oo.operation_seq, oo.planned_start, oo.planned_end,
-               oo.parallel_group, o.order_id, o.priority, o.customer,
+        SELECT o.id AS order_pk, oo.work_center, oo.operation_seq, oo.planned_start, oo.planned_end,
+               oo.parallel_group, o.order_id, o.priority, o.customer, oo.duration_mins,
                (
                  COALESCE(ro.setup_min, 0) + COALESCE(ro.run_per_unit_min, 0) * o.order_qty
                  + COALESCE(ro.queue_min, 0) + COALESCE(ro.move_min, 0)
@@ -100,6 +100,32 @@ def get_gantt_data(db: Session = Depends(get_db)):
         WHERE oo.planned_start IS NOT NULL AND oo.planned_end IS NOT NULL
         ORDER BY oo.work_center, oo.planned_start
     """)).mappings().all()
+
+    # Completed operations are pinned by the solver to the schedule origin
+    # (effectively "now") for internal sequencing purposes -- correct for the
+    # solver (anything still being planned necessarily starts at or after
+    # now anyway, so precedence/capacity are unaffected), but wrong for
+    # DISPLAY: every completed operation would show at the same instant on
+    # the timeline, regardless of when it actually happened, hours or days
+    # apart. Verified directly: three operations logged complete 2 hours
+    # apart all showed identical start=end in the raw schedule data. Fixed
+    # here by overriding a completed operation's displayed window with its
+    # real logged timestamps instead of the solver's collapsed-to-now value.
+    complete_evs = db.execute(text("""
+        SELECT order_id AS order_pk, operation_seq, event_timestamp
+        FROM actual_event
+        WHERE event_type = 'complete' AND operation_seq IS NOT NULL
+        ORDER BY event_timestamp
+    """)).mappings().all()
+    start_evs = db.execute(text("""
+        SELECT order_id AS order_pk, operation_seq, event_timestamp
+        FROM actual_event
+        WHERE event_type = 'start' AND operation_seq IS NOT NULL
+        ORDER BY event_timestamp
+    """)).mappings().all()
+    # last complete/start per (order_pk, operation_seq), in case of duplicates
+    complete_by_op = {(r["order_pk"], r["operation_seq"]): r["event_timestamp"] for r in complete_evs}
+    start_by_op = {(r["order_pk"], r["operation_seq"]): r["event_timestamp"] for r in start_evs}
 
     downtime = db.execute(text("""
         SELECT ae.event_id, ae.event_type, ae.event_timestamp, ae.downtime_mins, ae.downtime_reason,
@@ -180,23 +206,53 @@ def get_gantt_data(db: Session = Depends(get_db)):
         "qty": m["event_qty"],
     } for m in marker_rows]
 
-    return {
-        "operations": [{
+    def _display_window(r):
+        """Real historical start/end for a completed operation, instead of
+        the solver's collapsed-to-origin planned values. end = the logged
+        complete event. start = an explicit logged start event if one
+        exists, else back-calculated from the operation's known processing
+        time as a reasonable approximation.
+
+        Uses busy_hrs, not order_operation.duration_mins, for the fallback:
+        once an operation is pinned as completed, the solver persists its
+        duration as 0 (zero-flex, fixed at its recorded end -- see
+        cpsat_engine.py), so duration_mins is no longer a usable number here.
+        busy_hrs is computed fresh from the routing's own setup/run/queue/move
+        rate in this same query and is unaffected by that pinning.
+        """
+        key = (r["order_pk"], r["operation_seq"])
+        complete_ts = complete_by_op.get(key)
+        if complete_ts is None:
+            return r["planned_start"], r["planned_end"], False
+        start_ts = start_by_op.get(key)
+        if start_ts is None:
+            dur_mins = float(r["busy_hrs"] or 0) * 60
+            start_ts = complete_ts - timedelta(minutes=dur_mins)
+        return start_ts, complete_ts, True
+
+    operations_out = []
+    for r in ops:
+        start_ts, end_ts, is_completed = _display_window(r)
+        operations_out.append({
             "work_center": r["work_center"],
             "operation_seq": r["operation_seq"],
-            "start": r["planned_start"].isoformat(),
-            "end": r["planned_end"].isoformat(),
+            "start": start_ts.isoformat(),
+            "end": end_ts.isoformat(),
             "parallel_group": r["parallel_group"],
             "order_id": r["order_id"],
             "priority": r["priority"],
             "customer": r["customer"],
+            "completed": is_completed,
             # true machine-busy time (setup+run+queue+move), independent of
             # calendar placement -- an operation spanning a shift boundary
             # will show a longer start-to-end span than it was actually busy
             # for; this field is what should be trusted as "how long," not
             # (end - start).
             "busy_hrs": round(float(r["busy_hrs"]), 2) if r["busy_hrs"] is not None else None,
-        } for r in ops],
+        })
+
+    return {
+        "operations": operations_out,
         "downtime": dt_out,
         "events": markers_out,
     }
