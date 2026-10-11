@@ -353,7 +353,7 @@ function OrderWatchlist({ watch, onOpenOrder }: {
                   <td>{fmtDate(r.planned_delivery_dt)}</td>
                   <td><BufferBar hrs={r.buffer_hrs} /></td>
                   <td>{r.material_status ? <Pill tone={statusTone(r.material_status)}>{r.material_status}</Pill> : "-"}</td>
-                  <td><HealthPill status={r.health_status} /></td>
+                  <td><HealthPill status={r.health_status} completed={r.completed} /></td>
                 </tr>
               ))}
             </tbody>
@@ -372,8 +372,15 @@ function OrderWatchlist({ watch, onOpenOrder }: {
     </section>
   );
 }
-function HealthPill({ status }: { status: string | null | undefined }) {
+function HealthPill({ status, completed }: { status: string | null | undefined; completed?: boolean }) {
   if (!status) return <span className="muted">not scheduled</span>;
+  // Completed takes priority over the plain status: "on" alone can't tell a
+  // planner whether an order is still running and tracking well, or already
+  // finished -- those look identical without this. A completed order that
+  // finished late still shows its real status (risk/delay/crit) rather than
+  // being hidden behind a generic "Completed," since that lateness is still
+  // worth seeing.
+  if (completed && status === "on") return <Pill tone="ok">Completed</Pill>;
   if (status === "on") return <Pill tone="ok">On track</Pill>;
   if (status === "risk") return <Pill tone="warn">At risk</Pill>;
   if (status === "delay") return <Pill tone="warn">Delayed</Pill>;
