@@ -140,6 +140,7 @@ export interface WatchlistRow {
   planned_delivery_dt: string | null;
   work_centers: string[] | null;
   health_status: "on" | "risk" | "delay" | "crit" | null;
+  completed: boolean;
 }
 
 // --- scheduling / async solve ---
@@ -428,6 +429,7 @@ export interface GanttOp {
   priority: Priority;
   customer: string;
   busy_hrs?: number | null;
+  completed?: boolean;
 }
 
 export interface GanttDowntime {
