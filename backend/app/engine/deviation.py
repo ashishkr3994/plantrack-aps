@@ -57,6 +57,9 @@ class OrderStatus:
     remaining_buffer: float
     forecast_end: datetime | None
     reasons: list[Reason] = field(default_factory=list)
+    completed: bool = False  # true once complete/dispatch/delivered has been logged -- distinct
+                             # from status="on", which is otherwise indistinguishable from an
+                             # order that's merely still in progress and tracking well
 
 
 # alert dedup_key prefix -> (alert_type, owner role, title prefix)
@@ -313,7 +316,8 @@ def compute_order_status(db: Session, order: models.OrderHeader, now: datetime,
     return OrderStatus(
         order_pk=order.id, order_id=order.order_id, status=status, adherent=adherent,
         unconfirmed=unconfirmed, slip_hrs=slip_hrs, buffer_health=buffer_health,
-        remaining_buffer=remaining_buffer, forecast_end=forecast_end, reasons=reasons)
+        remaining_buffer=remaining_buffer, forecast_end=forecast_end, reasons=reasons,
+        completed=has_completed)
 
 
 def run_deviation_engine(db: Session, now: datetime | None = None) -> dict:
