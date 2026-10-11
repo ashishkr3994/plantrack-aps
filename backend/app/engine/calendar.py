@@ -1,4 +1,3 @@
-
 """Working-time calendar: convert between wall-clock datetimes and a flat
 'working-minute' timeline that the CP-SAT model optimises in.
 
@@ -51,7 +50,16 @@ class WorkingCalendar:
 
     def working_minutes_between(self, start: datetime, end: datetime) -> int:
         """Count working minutes between two datetimes (used to place an
-        order's material-ready offset relative to the schedule origin)."""
+        order's material-ready offset relative to the schedule origin).
+
+        This is a COARSE, whole-calendar-day approximation only -- it counts
+        full working days between the two dates and ignores time-of-day
+        entirely. Fine for a material-ready offset (a day-level estimate to
+        begin with), but WRONG for pinning an operation to its precise
+        minute: two operations on the same calendar day, hours apart, both
+        collapse to the same value. Use from_datetime() below for anything
+        that needs to round-trip with to_datetime() at minute precision
+        (completed-operation pinning, neighbor pinning in recovery)."""
         if end <= start:
             return 0
         # simple approximation: full working days * minutes_per_day + remainder
@@ -63,3 +71,25 @@ class WorkingCalendar:
             d = d + timedelta(days=1)
         return days * self.minutes_per_day
 
+    def from_datetime(self, dt: datetime) -> int:
+        """Precise inverse of to_datetime(): map a wall-clock datetime back
+        to its working-minute offset from origin, at full minute precision.
+        Assumes dt falls on a working day within a normal shift window (true
+        for any planned operation time or logged event timestamp); a dt
+        before origin's working-day start returns 0, same as to_datetime's
+        own lower bound."""
+        origin_day = self.origin.date()
+        while not self.is_working_day(origin_day):
+            origin_day = origin_day + timedelta(days=1)
+        d = dt.date()
+        if d < origin_day:
+            return 0
+        full_days = 0
+        cur = origin_day
+        while cur < d:
+            cur = cur + timedelta(days=1)
+            if self.is_working_day(cur):
+                full_days += 1
+        day_start = self._day_start(d)
+        rem = max(0, int((dt - day_start).total_seconds() // 60))
+        return full_days * self.minutes_per_day + rem
