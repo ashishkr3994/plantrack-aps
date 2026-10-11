@@ -38,8 +38,14 @@ def watchlist(db: Session = Depends(get_db)):
     """)
     cls = classify_orders(db)
     status_by_pk = {pk: comp.status for pk, comp in cls["details"].items()}
+    completed_by_pk = {pk: comp.completed for pk, comp in cls["details"].items()}
     for r in rows:
         r["health_status"] = status_by_pk.get(r["order_pk"])  # 'on' | 'risk' | 'delay' | 'crit' | None (unscheduled)
+        # Distinct from health_status: an order with status "on" could mean
+        # either "still in progress and tracking well" or "actually
+        # finished" -- these look identical without this flag. True once
+        # complete/dispatch/delivered has been logged for the order.
+        r["completed"] = bool(completed_by_pk.get(r["order_pk"], False))
     return rows
 
 
