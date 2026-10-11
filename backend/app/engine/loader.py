@@ -92,9 +92,24 @@ class SchedulingInput:
 def load_scheduling_input(db: Session, minutes_per_day: int = 600,
                           default_wc_capacity: int = 1,
                           wc_capacity_overrides: dict[str, int] | None = None,
-                          order_ids: list[str] | None = None) -> SchedulingInput:
+                          order_ids: list[str] | None = None,
+                          pin_existing_for: set | None = None) -> SchedulingInput:
     """Read orders (optionally a subset), their routings, and material status.
-    The origin is 'now' (UTC), floored to the hour."""
+    The origin is 'now' (UTC), floored to the hour.
+
+    pin_existing_for: order PKs whose operations should be FIXED at their
+    current, persisted planned_start/end for this solve -- reusing the same
+    completed_ops pinning mechanism as an already-finished operation (zero
+    flex, occupies its machine, successors start after it), but for an order
+    that isn't actually done. Used by single-order recovery: without this, a
+    "neighbor" included only for contention-awareness is loaded as a fully
+    free order the solver can reposition too, and since only the TARGET's
+    result is persisted afterward, the target's position can end up valid
+    only in a world where the neighbor also moved -- which never actually
+    happens. Pinning neighbors to where they really are makes them a genuine
+    fixed obstacle the target must route around, exactly matching what the
+    target will actually be scheduled against once persisted.
+    """
     origin = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
     # holidays from the plant calendar (explicit holiday_date rows)
@@ -175,8 +190,31 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             ts = ev.event_timestamp
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
-            end_min = max(0, cal.working_minutes_between(origin, ts))
+            end_min = max(0, cal.from_datetime(ts))
             completed_by_order.setdefault(ev.order_id, {})[int(ev.operation_seq)] = end_min
+
+    # pin_existing_for: fix each listed order's operations at their CURRENT
+    # persisted planned_end (not a real completion -- see docstring above).
+    # working_minutes_between returns 0 for a timestamp at or before origin,
+    # which is fine here since these are planned (future-relative-to-origin)
+    # times in the normal case; if one happens to already be in the past
+    # relative to this fresh origin, 0 (pinned at "now") is still a safe,
+    # conservative placement -- it just can't start any later than that.
+    if pin_existing_for:
+        pinned_ops = db.query(models.OrderOperation).join(
+            models.PlannedSchedule, models.OrderOperation.schedule_id == models.PlannedSchedule.id
+        ).filter(
+            models.OrderOperation.order_id.in_(pin_existing_for),
+            models.PlannedSchedule.is_current.is_(True),
+        ).all()
+        for op in pinned_ops:
+            if op.planned_end is None:
+                continue
+            ts = op.planned_end
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            end_min = max(0, cal.from_datetime(ts))
+            completed_by_order.setdefault(op.order_id, {})[int(op.operation_seq)] = end_min
 
     orders: list[OrderInput] = []
     for o in q.all():
@@ -250,7 +288,7 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             if start_dt.tzinfo is None:
                 start_dt = start_dt.replace(tzinfo=timezone.utc)
             warm[(oo.order_id, oo.operation_seq)] = max(
-                0, cal.working_minutes_between(origin, start_dt))
+                0, cal.from_datetime(start_dt))
 
     # downtime blocks from logged pause/resume events -> real solver constraints.
     # An operational pause (default) blocks only the affected order's operation;
@@ -282,7 +320,7 @@ def load_scheduling_input(db: Session, minutes_per_day: int = 600,
             start_ts = window.start_ts
             if start_ts.tzinfo is None:
                 start_ts = start_ts.replace(tzinfo=timezone.utc)
-            start_min = max(0, cal.working_minutes_between(origin, start_ts))
+            start_min = max(0, cal.from_datetime(start_ts))
             end_min = start_min + int(round(mins))
             # which work centre? the affected operation's work centre on the route.
             rid = order_route.get(order_pk)
